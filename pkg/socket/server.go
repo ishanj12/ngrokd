@@ -76,8 +76,8 @@ func (s *Server) Start() error {
 	
 	s.listener = listener
 	
-	// Set permissions (readable/writable by owner and group)
-	if err := os.Chmod(s.socketPath, 0660); err != nil {
+	// Set permissions (readable/writable by all for easier CLI access)
+	if err := os.Chmod(s.socketPath, 0666); err != nil {
 		s.logger.Error(err, "Failed to set socket permissions")
 	}
 	
