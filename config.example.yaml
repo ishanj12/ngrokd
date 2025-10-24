@@ -1,0 +1,70 @@
+# ngrok Forward Proxy Agent Configuration
+# Copy this file to config.yaml and customize for your environment
+
+agent:
+  # Description shown in ngrok dashboard
+  description: "ngrok forward proxy agent"
+  
+  # Ngrok region (us, eu, ap, au, sa, jp, in, global)
+  region: "global"
+  
+  # API key for auto-provisioning (can also use NGROK_API_KEY env var)
+  # api_key: "YOUR_API_KEY_HERE"
+  
+  # Certificate directory (default: ~/.ngrok-forward-proxy/certs)
+  # cert_dir: "/path/to/certs"
+  
+  # Manual certificate files (alternative to auto-provisioning)
+  # cert_file: "/path/to/tls.crt"
+  # key_file: "/path/to/tls.key"
+  
+  # Ingress endpoint (usually auto-detected, leave empty for default)
+  # ingress_endpoint: "kubernetes-binding-ingress.ngrok.io:443"
+
+# Endpoints to forward
+endpoints:
+  # Example: API service
+  - name: "api-service"
+    uri: "https://api.example.ngrok.app"
+    port: 443
+    local_port: 8080
+    local_address: "127.0.0.1"
+    enabled: true
+
+  # Example: Web service
+  - name: "web-service"
+    uri: "https://web.example.ngrok.app"
+    port: 443
+    local_port: 8081
+    local_address: "127.0.0.1"
+    enabled: true
+
+  # Example: Database service (TCP)
+  - name: "postgres"
+    uri: "tcp://db.example.ngrok.app"
+    port: 5432
+    local_port: 5432
+    local_address: "127.0.0.1"
+    enabled: false  # Disabled by default
+
+# Health check configuration
+health:
+  # Enable health check server (default: true)
+  enabled: true
+  
+  # Port for health endpoints (default: 8081)
+  port: 8081
+  
+  # Bind address (default: 127.0.0.1)
+  address: "127.0.0.1"
+
+# Logging configuration
+logging:
+  # Level: info, debug, error
+  level: "info"
+  
+  # Format: text, json
+  format: "text"
+  
+  # Verbose output
+  verbose: false

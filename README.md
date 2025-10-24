@@ -313,25 +313,24 @@ See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for complete monitoring guide
 
 **Current Status**: Basic implementation complete
 
-**Working**:
-- ✅ mTLS connection to ngrok ingress
-- ✅ Protocol upgrade (ConnRequest/ConnResponse)
-- ✅ Bidirectional traffic forwarding
-- ✅ Local listener management
-- ✅ Multi-endpoint support (via config file)
-- ✅ YAML configuration files
-- ✅ Endpoint discovery (--list-endpoints)
-- ✅ Automatic certificate provisioning
-- ✅ Certificate caching and reuse
-- ✅ Manual certificate mode
+**Features**:
+- ✅ **mTLS Authentication**: Automatic certificate provisioning and management
+- ✅ **Auto-Discovery**: `ngrokd connect --all` discovers and connects to all endpoints
+- ✅ **Multi-Endpoint**: Support multiple endpoints in single agent via config file
+- ✅ **HTTP Header Rewriting**: Automatic Host header rewriting for HTTP/HTTPS
+- ✅ **Protocol Support**: HTTP, HTTPS, TCP, TLS, WebSockets
+- ✅ **Dual-Stack**: IPv4 and IPv6 support
+- ✅ **Health Monitoring**: `/health`, `/ready`, `/status` endpoints with metrics
+- ✅ **Colorful UI**: Terminal UI with formatted output
+- ✅ **Network Access**: Accepts connections from localhost and network
+- ✅ **YAML Configuration**: Full configuration file support
+- ✅ **Platform Agnostic**: Works on Linux, macOS, Windows, Docker
 
-**TODO**:
-- ⏳ Automatic endpoint discovery and listener creation (auto mode)
-- ⏳ Certificate rotation support
-- ⏳ Health checks and metrics endpoint
+**Future Enhancements**:
 - ⏳ Connection retry logic with exponential backoff
-- ⏳ Graceful shutdown with connection draining
-- ⏳ Docker packaging
+- ⏳ Certificate rotation support
+- ⏳ Docker image with multi-arch support
+- ⏳ Prometheus metrics exporter
 
 ## Certificate Provisioning
 
