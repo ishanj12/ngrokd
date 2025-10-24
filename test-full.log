@@ -139,3 +139,15 @@
 "level"=1 "msg"="Found bound endpoints" "count"=2
 "level"=0 "msg"="Updating /etc/hosts" "entries"=2
 "level"=0 "msg"="/etc/hosts updated successfully"
+"level"=1 "msg"="Polling for bound endpoints"
+"level"=1 "msg"="Found bound endpoints" "count"=2
+"level"=0 "msg"="Updating /etc/hosts" "entries"=2
+"level"=0 "msg"="/etc/hosts updated successfully"
+"level"=1 "msg"="Polling for bound endpoints"
+"level"=1 "msg"="Found bound endpoints" "count"=2
+"level"=0 "msg"="Updating /etc/hosts" "entries"=2
+"level"=0 "msg"="/etc/hosts updated successfully"
+"level"=1 "msg"="Polling for bound endpoints"
+"level"=1 "msg"="Found bound endpoints" "count"=2
+"level"=0 "msg"="Updating /etc/hosts" "entries"=2
+"level"=0 "msg"="/etc/hosts updated successfully"
