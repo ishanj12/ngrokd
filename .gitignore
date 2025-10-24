@@ -35,10 +35,19 @@ certs/
 # Config files with secrets
 config.yaml
 config.yml
-!config.example.yaml
-!config.minimal.yaml
-!config.multi-endpoint.yaml
 *.env
+
+# Config examples (keep locally)
+config.example.yaml
+config.minimal.yaml
+config.multi-endpoint.yaml
+
+# Documentation files (keep locally only)
+LIMITATIONS.md
+EXAMPLES.md
+FEATURES.md
+USAGE.md
+research.md
 
 # OS
 .DS_Store
