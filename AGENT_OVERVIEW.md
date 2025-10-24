@@ -9,25 +9,48 @@
 ### Architecture
 
 ```
-Local Application
-    ↓ (connects to localhost:8080)
-ngrokd Agent (local listener)
-    ↓ (mTLS authenticated connection)
+┌─────────────────────────────────────────────────────────┐
+│              Virtual Network Interface                  │
+│                    ngrokd0                              │
+│              Subnet: 10.107.0.0/16                      │
+│                                                         │
+│  10.107.0.1  Gateway (interface address)                │
+│  10.107.0.2  my-api.ngrok.app                          │
+│  10.107.0.3  my-service.ngrok.app                      │
+│  10.107.0.4  database.ngrok.app                        │
+└─────────────────────────────────────────────────────────┘
+           ↓
+┌─────────────────────────────────────────────────────────┐
+│              /etc/hosts (auto-managed)                  │
+│                                                         │
+│  # BEGIN ngrokd managed section                         │
+│  10.107.0.2    my-api.ngrok.app                        │
+│  10.107.0.3    my-service.ngrok.app                    │
+│  # END ngrokd managed section                           │
+└─────────────────────────────────────────────────────────┘
+           ↓
+    Local Application
+           ↓ (curl http://my-api.ngrok.app)
+           ↓ (resolves to 10.107.0.2)
+    ngrokd Listener (10.107.0.2:80)
+           ↓ (mTLS connection)
 kubernetes-binding-ingress.ngrok.io:443
-    ↓ (protobuf protocol)
+           ↓ (protobuf protocol)
 Kubernetes Bound Endpoint in ngrok Cloud
-    ↓ (routes to configured backend)
-Backend Service (API, database, etc.)
+           ↓ (routes to backend)
+    Backend Service
 ```
 
 ### Connection Flow
 
-1. **Agent discovers endpoints** by querying ngrok API for kubernetes bound endpoints
-2. **Creates local listeners** (one per endpoint on ports 8080, 8081, etc.)
-3. **Accepts connections** from local applications
-4. **Establishes mTLS** connection to ngrok's ingress endpoint
-5. **Forwards traffic** bidirectionally using protobuf protocol
-6. **Rewrites HTTP Host headers** automatically for seamless proxying
+1. **Daemon creates virtual interface** `ngrokd0` with subnet `10.107.0.0/16`
+2. **Polls ngrok API** every 30s for kubernetes bound endpoints
+3. **Allocates unique IPs** from subnet for each discovered endpoint
+4. **Updates /etc/hosts** automatically with hostname→IP mappings
+5. **Creates listeners** on allocated IPs that accept connections
+6. **Forwards traffic** via mTLS to kubernetes-binding-ingress.ngrok.io:443
+7. **Routes to backend** through bound endpoint configuration
+8. **Manages lifecycle** dynamically (add/remove endpoints as they change)
 
 ### Authentication & Security
 

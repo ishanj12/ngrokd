@@ -1,0 +1,33 @@
+"level"=0 "msg"="Starting ngrokd daemon"
+"level"=0 "msg"="Unix socket server started" "path"="/tmp/ngrokd-test.sock"
+"level"=0 "msg"="Starting health check server" "address"="127.0.0.1:8081"
+"level"=0 "msg"="Not registered and no API key provided"
+"level"=0 "msg"="Waiting for API key via: ngrok daemon set-api-key <KEY>"
+"level"=0 "msg"="Socket listening at" "path"="/tmp/ngrokd-test.sock"
+"level"=0 "msg"="Daemon started successfully"
+"level"=1 "msg"="Received command" "command"="status" "args"=[]
+"level"=1 "msg"="Received command" "command"="list" "args"=[]
+"level"=1 "msg"="Received command" "command"="set-api-key" "args"=["34Ws0TVQ64V9bzDYgjJ23isqsAD_4TK1e5k4vD6gm2Szq8fPa"]
+"level"=0 "msg"="Registering with ngrok API"
+"level"=0 "msg"="Provisioning new certificate via ngrok API"
+"level"=0 "msg"="Generating private key and CSR"
+"level"=0 "msg"="Registering with ngrok API"
+"level"=0 "msg"="Successfully registered with ngrok" "operatorID"="k8sop_34WsHIlbz1bnFApVqmCahtNoGbB" "ingressEndpoint"="connect.ngrok-endpoints.com:443" "region"="global"
+"level"=0 "msg"="Received certificate from ngrok" "notBefore"="2025-10-24T21:16:12Z" "notAfter"="2026-01-22T21:16:12Z"
+"level"=0 "msg"="Certificate saved" "keyPath"="test-daemon/certs/tls.key" "certPath"="test-daemon/certs/tls.crt"
+"level"=0 "msg"="Registration complete" "operatorID"="k8sop_34WsHIlbz1bnFApVqmCahtNoGbB"
+"level"=1 "msg"="No custom ngrok certs loaded" "error"="open /etc/ssl/certs/ngrok/: no such file or directory"
+"level"=0 "msg"="Starting polling loop" "interval"="30s"
+"level"=1 "msg"="Polling for bound endpoints"
+"level"=1 "msg"="Found bound endpoints" "count"=1
+"level"=0 "msg"="Allocated IP" "hostname"="ishan.testagent" "ip"="127.0.0.2"
+"msg"="Failed to start listener" "error"="failed to create listener on 127.0.0.2:80: listen tcp 127.0.0.2:80: bind: can't assign requested address" "endpoint"="http://ishan.testagent"
+"level"=0 "msg"="Updating /etc/hosts" "entries"=1
+"level"=0 "msg"="/etc/hosts updated successfully"
+"level"=1 "msg"="Received command" "command"="status" "args"=[]
+"level"=1 "msg"="Polling for bound endpoints"
+"level"=1 "msg"="Found bound endpoints" "count"=1
+"msg"="Failed to start listener" "error"="failed to create listener on 127.0.0.2:80: listen tcp 127.0.0.2:80: bind: can't assign requested address" "endpoint"="http://ishan.testagent"
+"level"=0 "msg"="Updating /etc/hosts" "entries"=1
+"level"=0 "msg"="/etc/hosts updated successfully"
+"level"=1 "msg"="Received command" "command"="list" "args"=[]

@@ -1,0 +1,487 @@
+package daemon
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/config"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/health"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/hosts"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/ipalloc"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/listener"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/netif"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/socket"
+)
+
+const (
+	defaultConfigPath = "/etc/ngrokd/config.yml"
+)
+
+// Daemon represents the ngrokd daemon
+type Daemon struct {
+	config       *config.DaemonConfig
+	logger       logr.Logger
+	
+	certManager  *cert.Manager
+	ipAllocator  *ipalloc.Allocator
+	hostsManager *hosts.Manager
+	socketServer *socket.Server
+	healthServer *health.Server
+	netInterface netif.Interface
+	
+	forwarder    *forwarder.Forwarder
+	listenerMgr  *listener.Manager
+	
+	operatorID   string
+	registered   bool
+	
+	mu           sync.RWMutex
+	endpoints    map[string]socket.EndpointInfo // endpoint ID -> info
+	nextPort     int                            // For network-accessible mode
+}
+
+// New creates a new daemon instance
+func New(configPath string, logger logr.Logger) (*Daemon, error) {
+	cfg, err := config.LoadDaemonConfig(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+	
+	d := &Daemon{
+		config:    cfg,
+		logger:    logger,
+		endpoints: make(map[string]socket.EndpointInfo),
+		nextPort:  cfg.Net.StartPort,
+	}
+	
+	// Check if already registered
+	operatorIDPath := d.getOperatorIDPath()
+	if data, err := os.ReadFile(operatorIDPath); err == nil {
+		d.operatorID = string(data)
+		d.registered = true
+		logger.Info("Found existing registration", "operatorID", d.operatorID)
+	}
+	
+	return d, nil
+}
+
+// Start starts the daemon
+func (d *Daemon) Start() error {
+	d.logger.Info("Starting ngrokd daemon")
+	
+	// Create virtual network interface
+	netInterface, err := netif.New(netif.Config{
+		Name:   d.config.Net.InterfaceName,
+		Subnet: d.config.Net.Subnet,
+		Logger: d.logger,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network interface: %w", err)
+	}
+	d.netInterface = netInterface
+	
+	// Create the interface with subnet
+	if err := d.netInterface.Create(d.config.Net.Subnet); err != nil {
+		d.logger.Error(err, "Failed to create virtual network interface - will attempt to continue")
+		// Don't fail startup - listeners may still work on loopback
+	}
+	
+	// Initialize components
+	d.hostsManager = hosts.NewManager(d.logger)
+	
+	// On macOS, use 127.0.0.0/8 to avoid utun routing conflicts
+	subnet := d.config.Net.Subnet
+	if d.isMacOS() {
+		subnet = "127.0.0.0/8"
+		d.logger.Info("Using 127.0.0.0/8 subnet for macOS compatibility")
+	}
+	d.ipAllocator = ipalloc.NewAllocator(subnet, d.logger)
+	
+	// Load persistent IP mappings
+	ipMappingsPath := d.getIPMappingsPath()
+	if err := d.ipAllocator.LoadPersistentMappings(ipMappingsPath); err != nil {
+		d.logger.Info("Could not load persistent IP mappings", "error", err)
+	}
+	
+	// Start unix socket server
+	d.socketServer = socket.NewServer(d.config.Server.SocketPath, d, d.logger)
+	if err := d.socketServer.Start(); err != nil {
+		return fmt.Errorf("failed to start socket server: %w", err)
+	}
+	
+	// Start health server
+	d.healthServer = health.NewServer(health.Config{
+		Address: "127.0.0.1",
+		Port:    8081,
+		Logger:  d.logger,
+	})
+	if err := d.healthServer.Start(); err != nil {
+		d.logger.Error(err, "Failed to start health server")
+	}
+	
+	// Check if registered
+	if !d.registered {
+		if d.config.API.Key == "" {
+			d.logger.Info("Not registered and no API key provided")
+			d.logger.Info("Waiting for API key via: ngrok daemon set-api-key <KEY>")
+			d.logger.Info("Socket listening at", "path", d.config.Server.SocketPath)
+			// Will register when API key is provided via socket
+		} else {
+			// Auto-register
+			if err := d.register(); err != nil {
+				return fmt.Errorf("failed to register: %w", err)
+			}
+		}
+	}
+	
+	// If registered, start polling
+	if d.registered {
+		if err := d.initializeForwarder(); err != nil {
+			return fmt.Errorf("failed to initialize forwarder: %w", err)
+		}
+		go d.pollingLoop()
+	}
+	
+	// Run forever
+	d.logger.Info("Daemon started successfully")
+	select {}
+}
+
+func (d *Daemon) register() error {
+	d.logger.Info("Registering with ngrok API")
+	
+	// Get cert directory from config paths
+	certDir := d.getCertDir()
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cert directory: %w", err)
+	}
+	
+	d.certManager = cert.NewManager(cert.Config{
+		CertDir:     certDir,
+		APIKey:      d.config.API.Key,
+		Description: "ngrokd daemon",
+		Region:      "global",
+		Logger:      d.logger,
+	})
+	
+	ctx := context.Background()
+	_, err := d.certManager.EnsureCertificate(ctx, cert.Config{
+		CertDir:     certDir,
+		APIKey:      d.config.API.Key,
+		Description: "ngrokd daemon",
+		Region:      "global",
+		Logger:      d.logger,
+	})
+	if err != nil {
+		return err
+	}
+	
+	d.operatorID = d.certManager.GetOperatorID()
+	d.registered = true
+	
+	// Save operator ID
+	operatorIDPath := d.getOperatorIDPath()
+	if err := os.WriteFile(operatorIDPath, []byte(d.operatorID), 0644); err != nil {
+		return err
+	}
+	
+	d.logger.Info("Registration complete", "operatorID", d.operatorID)
+	return nil
+}
+
+func (d *Daemon) initializeForwarder() error {
+	// Load certificate
+	cert, err := tls.LoadX509KeyPair(d.config.Server.ClientCert, d.config.Server.ClientKey)
+	if err != nil {
+		return fmt.Errorf("failed to load certificate: %w", err)
+	}
+	
+	// Create forwarder
+	d.forwarder, err = forwarder.New(forwarder.Config{
+		IngressEndpoint: d.config.IngressEndpoint,
+		TLSCert:         cert,
+		Logger:          d.logger,
+	})
+	if err != nil {
+		return err
+	}
+	
+	// Create listener manager
+	d.listenerMgr = listener.New(d.forwarder, d.logger)
+	d.listenerMgr.SetStatusCallback(d.healthServer)
+	
+	return nil
+}
+
+func (d *Daemon) pollingLoop() {
+	ticker := time.NewTicker(time.Duration(d.config.BoundEndpoints.PollInterval) * time.Second)
+	defer ticker.Stop()
+	
+	d.logger.Info("Starting polling loop", "interval", fmt.Sprintf("%ds", d.config.BoundEndpoints.PollInterval))
+	
+	// Poll immediately on startup
+	d.pollAndReconcile()
+	
+	for range ticker.C {
+		d.pollAndReconcile()
+	}
+}
+
+func (d *Daemon) pollAndReconcile() {
+	d.logger.V(1).Info("Polling for bound endpoints")
+	
+	// Fetch bound endpoints from API
+	ctx := context.Background()
+	client := ngrokapi.NewClient(d.config.API.Key)
+	
+	apiEndpoints, err := client.ListBoundEndpoints(ctx, d.operatorID)
+	if err != nil {
+		d.logger.Error(err, "Failed to fetch bound endpoints")
+		return
+	}
+	
+	d.logger.V(1).Info("Found bound endpoints", "count", len(apiEndpoints))
+	
+	// Build desired state
+	desired := make(map[string]ngrokapi.Endpoint)
+	for _, ep := range apiEndpoints {
+		desired[ep.ID] = ep
+	}
+	
+	d.mu.Lock()
+	
+	// Remove deleted endpoints
+	for id := range d.endpoints {
+		if _, exists := desired[id]; !exists {
+			d.removeEndpoint(id)
+		}
+	}
+	
+	// Add new endpoints
+	for id, ep := range desired {
+		if _, exists := d.endpoints[id]; !exists {
+			d.addEndpoint(ep)
+		}
+	}
+	
+	d.mu.Unlock()
+	
+	// Update /etc/hosts
+	d.updateHosts()
+	
+	// Save IP mappings
+	ipMappingsPath := d.getIPMappingsPath()
+	d.ipAllocator.SavePersistentMappings(ipMappingsPath)
+}
+
+// Helper methods to get paths from config
+
+func (d *Daemon) getCertDir() string {
+	// Derive cert directory from client cert path
+	if d.config.Server.ClientCert != "" {
+		return filepath.Dir(d.config.Server.ClientCert)
+	}
+	return "/etc/ngrokd"
+}
+
+func (d *Daemon) getOperatorIDPath() string {
+	certDir := d.getCertDir()
+	return filepath.Join(certDir, "operator_id")
+}
+
+func (d *Daemon) getIPMappingsPath() string {
+	certDir := d.getCertDir()
+	return filepath.Join(certDir, "ip_mappings.json")
+}
+
+func (d *Daemon) isMacOS() bool {
+	// Simple runtime OS detection
+	return os.Getenv("HOME") != "" && fileExists("/System/Library/CoreServices/SystemVersion.plist")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
+	// Parse hostname and port from URL
+	hostname, port, err := ipalloc.ParseHostname(ep.URL)
+	if err != nil {
+		d.logger.Error(err, "Failed to parse endpoint", "url", ep.URL)
+		return
+	}
+	
+	// Allocate IP for hostname
+	ipStr, err := d.ipAllocator.AllocateIP(hostname)
+	if err != nil {
+		d.logger.Error(err, "Failed to allocate IP", "hostname", hostname)
+		return
+	}
+	
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		d.logger.Error(fmt.Errorf("invalid IP"), "Failed to parse allocated IP", "ip", ipStr)
+		return
+	}
+	
+	// Add IP to virtual interface
+	if d.netInterface != nil {
+		if err := d.netInterface.AddIP(ip); err != nil {
+			d.logger.Error(err, "Failed to add IP to interface", "ip", ipStr)
+			// Continue anyway - listener may still work
+		}
+	}
+	
+	// Create primary listener on unique IP (for local multi-port access)
+	endpoint := forwarder.BoundEndpoint{
+		Name:         ep.ID,
+		URI:          ep.URL,
+		Port:         port,
+		LocalPort:    port,
+		LocalAddress: ipStr,
+	}
+	
+	ctx := context.Background()
+	if err := d.listenerMgr.StartListener(ctx, endpoint); err != nil {
+		d.logger.Error(err, "Failed to start listener", "endpoint", ep.URL)
+		return
+	}
+	
+	// If network accessible, create second listener on 0.0.0.0 with unique port
+	if d.config.Net.NetworkAccessible {
+		networkPort := d.nextPort
+		d.nextPort++
+		
+		networkEndpoint := forwarder.BoundEndpoint{
+			Name:         ep.ID + "-network",
+			URI:          ep.URL,
+			Port:         port,
+			LocalPort:    networkPort,
+			LocalAddress: "0.0.0.0",
+		}
+		
+		if err := d.listenerMgr.StartListener(ctx, networkEndpoint); err != nil {
+			d.logger.Error(err, "Failed to start network listener", "endpoint", ep.URL, "port", networkPort)
+			// Don't fail - primary listener still works
+		} else {
+			d.logger.Info("Started network listener",
+				"endpoint", ep.URL,
+				"address", fmt.Sprintf("0.0.0.0:%d", networkPort),
+				"accessible_from", "network")
+		}
+	}
+	
+	// Register with health server
+	d.healthServer.RegisterEndpoint(ep.ID, fmt.Sprintf("%s:%d", ipStr, port), ep.URL)
+	
+	// Track endpoint
+	d.endpoints[ep.ID] = socket.EndpointInfo{
+		ID:       ep.ID,
+		Hostname: hostname,
+		IP:       ipStr,
+		Port:     port,
+		URL:      ep.URL,
+	}
+	
+	d.logger.Info("Added bound endpoint",
+		"hostname", hostname,
+		"ip", ipStr,
+		"port", port,
+		"url", ep.URL)
+}
+
+func (d *Daemon) removeEndpoint(id string) {
+	if ep, exists := d.endpoints[id]; exists {
+		// Stop listener
+		d.listenerMgr.StopListener(id)
+		
+		// Remove IP from interface
+		if d.netInterface != nil {
+			ip := net.ParseIP(ep.IP)
+			if ip != nil {
+				if err := d.netInterface.RemoveIP(ip); err != nil {
+					d.logger.Error(err, "Failed to remove IP from interface", "ip", ep.IP)
+				}
+			}
+		}
+		
+		// Release IP
+		d.ipAllocator.ReleaseIP(ep.Hostname)
+		
+		// Remove from tracking
+		delete(d.endpoints, id)
+		
+		d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP)
+	}
+}
+
+func (d *Daemon) updateHosts() {
+	mappings := d.ipAllocator.GetAllMappings()
+	if err := d.hostsManager.UpdateHosts(mappings); err != nil {
+		d.logger.Error(err, "Failed to update /etc/hosts")
+	}
+}
+
+// Socket command implementations
+
+func (d *Daemon) GetStatus() socket.StatusResponse {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	
+	return socket.StatusResponse{
+		Registered:      d.registered,
+		OperatorID:      d.operatorID,
+		EndpointCount:   len(d.endpoints),
+		IngressEndpoint: d.config.IngressEndpoint,
+	}
+}
+
+func (d *Daemon) ListEndpoints() []socket.EndpointInfo {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	
+	result := make([]socket.EndpointInfo, 0, len(d.endpoints))
+	for _, ep := range d.endpoints {
+		result = append(result, ep)
+	}
+	return result
+}
+
+func (d *Daemon) SetAPIKey(key string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	// Update config
+	d.config.API.Key = key
+	
+	// If not registered, register now
+	if !d.registered {
+		d.mu.Unlock() // Unlock before register (it needs lock)
+		if err := d.register(); err != nil {
+			d.mu.Lock()
+			return err
+		}
+		d.mu.Lock()
+		
+		// Initialize forwarder
+		if err := d.initializeForwarder(); err != nil {
+			return err
+		}
+		
+		// Start polling
+		go d.pollingLoop()
+	}
+	
+	return nil
+}

@@ -60,8 +60,12 @@ func (m *Manager) StartListener(ctx context.Context, endpoint forwarder.BoundEnd
 		return fmt.Errorf("listener already exists for endpoint %s", endpoint.Name)
 	}
 
-	// Create local listener (bind to all interfaces for localhost to support both IPv4 and IPv6)
-	addr := fmt.Sprintf(":%d", endpoint.LocalPort)
+	// Create local listener on specific IP:port
+	localIP := endpoint.LocalAddress
+	if localIP == "" {
+		localIP = "127.0.0.1"
+	}
+	addr := fmt.Sprintf("%s:%d", localIP, endpoint.LocalPort)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to create listener on %s: %w", addr, err)
@@ -112,52 +116,57 @@ func (m *Manager) StopListener(endpointName string) error {
 
 // acceptConnections accepts and forwards connections in a loop
 func (m *Manager) acceptConnections(ctx context.Context, active *activeListener) {
+	m.logger.Info("accept loop started", "endpoint", active.endpoint.Name, "address", active.listener.Addr().String())
+	
 	for {
-		select {
-		case <-ctx.Done():
+		// Check if context was cancelled before accepting
+		if ctx.Err() != nil {
 			m.logger.Info("listener context cancelled", "endpoint", active.endpoint.Name)
 			return
-		default:
-			// Accept connection with timeout handling
-			conn, err := active.listener.Accept()
-			if err != nil {
-				// Check if context was cancelled
-				if ctx.Err() != nil {
-					return
-				}
+		}
 
-				m.logger.Error(err, "failed to accept connection",
-					"endpoint", active.endpoint.Name)
-				continue
+		m.logger.V(1).Info("waiting for connection", "endpoint", active.endpoint.Name)
+		
+		// Accept connection (this blocks until a connection arrives)
+		conn, err := active.listener.Accept()
+		if err != nil {
+			// Check if context was cancelled or listener closed
+			if ctx.Err() != nil {
+				return
 			}
 
-			// Log HTTP requests nicely
-			m.logger.Info("→",
-				"from", conn.RemoteAddr().String(),
-				"to", active.endpoint.URI)
+			m.logger.Error(err, "failed to accept connection",
+				"endpoint", active.endpoint.Name)
+			continue
+		}
 
-			// Record connection
-			if m.statusCallback != nil {
-				m.statusCallback.RecordConnection(active.endpoint.Name)
-			}
+		// Log HTTP requests nicely
+		m.logger.Info("→",
+			"from", conn.RemoteAddr().String(),
+			"to", active.endpoint.URI)
 
-			// Forward connection in background
-			go func() {
-				defer func() {
-					if m.statusCallback != nil {
-						m.statusCallback.RecordConnectionClose(active.endpoint.Name)
-					}
-				}()
+		// Record connection
+		if m.statusCallback != nil {
+			m.statusCallback.RecordConnection(active.endpoint.Name)
+		}
 
-				if err := m.forwarder.ForwardConnection(conn, active.endpoint); err != nil {
-					m.logger.Error(err, "failed to forward connection",
-						"endpoint", active.endpoint.Name)
-					if m.statusCallback != nil {
-						m.statusCallback.RecordError(active.endpoint.Name)
-					}
+		// Forward connection in background
+		go func(c net.Conn) {
+			defer c.Close()
+			defer func() {
+				if m.statusCallback != nil {
+					m.statusCallback.RecordConnectionClose(active.endpoint.Name)
 				}
 			}()
-		}
+
+			if err := m.forwarder.ForwardConnection(c, active.endpoint); err != nil {
+				m.logger.Error(err, "failed to forward connection",
+					"endpoint", active.endpoint.Name)
+				if m.statusCallback != nil {
+					m.statusCallback.RecordError(active.endpoint.Name)
+				}
+			}
+		}(conn)
 	}
 }
 

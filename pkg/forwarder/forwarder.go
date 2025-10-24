@@ -34,17 +34,11 @@ type Config struct {
 
 // BoundEndpoint represents a kubernetes bound endpoint in ngrok cloud
 type BoundEndpoint struct {
-	// Name is the endpoint name (for identification)
-	Name string
-
-	// URI is the endpoint URI (e.g., "https://my-app.ngrok.app")
-	URI string
-
-	// Port is the target upstream port
-	Port int
-
-	// LocalPort is the local port to listen on
-	LocalPort int
+	Name         string
+	URI          string
+	Port         int
+	LocalPort    int
+	LocalAddress string
 }
 
 // Forwarder handles forwarding traffic from local connections to ngrok bound endpoints

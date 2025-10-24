@@ -1,30 +1,49 @@
-# ngrokd - ngrok Forward Proxy Agent
+# ngrokd - ngrok Forward Proxy Daemon
 
-A standalone CLI tool that forwards traffic from local applications to Kubernetes bound endpoints in ngrok's cloud service via mTLS, without requiring Kubernetes.
+A standalone daemon that forwards traffic from local applications to Kubernetes bound endpoints in ngrok's cloud service via mTLS, without requiring Kubernetes.
 
 ## Overview
 
-This agent replicates the functionality of the ngrok Kubernetes operator's bindings forwarder, but runs as a platform-agnostic binary. It:
+ngrokd runs as a background daemon that:
 
-1. Auto-discovers kubernetes bound endpoints via ngrok API
-2. Creates local TCP listeners for each endpoint
-3. Accepts connections from local applications
-4. Forwards traffic to kubernetes bound endpoints via mTLS connection to `kubernetes-binding-ingress.ngrok.io:443`
-5. Uses the same protocol as the operator (protobuf over TLS)
-6. Provides health check endpoints for monitoring
+1. **Creates virtual network interface** (`ngrokd0`) with subnet `10.107.0.0/16`
+2. **Auto-discovers** kubernetes bound endpoints via ngrok API
+3. **Allocates unique IPs** from subnet for each endpoint
+4. **Updates /etc/hosts** automatically for DNS resolution
+5. **Creates listeners** on allocated IPs that forward via mTLS
+6. **Manages lifecycle** dynamically (add/remove endpoints on-the-fly)
+7. **Persists state** across restarts
 
 ## Architecture
 
 ```
-Local App → Local Listener (127.0.0.1:8080)
-             ↓
-         Agent Forwarder
-             ↓ (mTLS)
+Local Application
+    ↓ (resolves my-api.ngrok.app via /etc/hosts)
+10.107.0.2:443 (virtual interface IP)
+    ↓ (ngrokd listener accepts connection)
+mTLS Connection
+    ↓
 kubernetes-binding-ingress.ngrok.io:443
-             ↓
-    Bound Endpoint in ngrok Cloud
-             ↓
-        Backend Service
+    ↓
+Bound Endpoint in ngrok Cloud
+    ↓
+Backend Service
+```
+
+### Virtual Network Interface
+
+```
+ngrokd0 Interface (10.107.0.0/16)
+├── 10.107.0.1 - Gateway (interface address)
+├── 10.107.0.2 - my-api.ngrok.app
+├── 10.107.0.3 - my-service.ngrok.app
+└── 10.107.0.4 - my-database.ngrok.app
+
+/etc/hosts (auto-managed)
+# BEGIN ngrokd managed section
+10.107.0.2    my-api.ngrok.app
+10.107.0.3    my-service.ngrok.app
+# END ngrokd managed section
 ```
 
 ## Prerequisites
@@ -78,29 +97,59 @@ ngrokd version
 
 ## Quick Start
 
-### Connect to All Endpoints (Auto-Discovery)
+### 1. Install
 
 ```bash
-export NGROK_API_KEY=your_api_key
-ngrokd connect --all
+go build -o ngrokd ./cmd/ngrokd
+sudo mv ngrokd /usr/local/bin/
 ```
 
-This will:
-- Auto-discover all kubernetes bound endpoints
-- Create local listeners for each (ports 8080, 8081, 8082, ...)
-- Show the mapping in terminal output
-
-### Connect to Specific Endpoint
+### 2. Create Configuration
 
 ```bash
-ngrokd connect --endpoint-uri=https://my-app.ngrok.app --local-port=8080
+sudo mkdir -p /etc/ngrokd
+sudo cat > /etc/ngrokd/config.yml << 'EOF'
+api:
+  url: https://api.ngrok.com
+  key: ""  # Set via socket command
+
+ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
+
+server:
+  socket_path: /var/run/ngrokd.sock
+  client_cert: /etc/ngrokd/tls.crt
+  client_key: /etc/ngrokd/tls.key
+
+bound_endpoints:
+  poll_interval: 30
+
+net:
+  interface_name: ngrokd0
+  subnet: 10.107.0.0/16
+EOF
 ```
 
-### List Available Endpoints
+### 3. Start Daemon
 
 ```bash
-ngrokd list
+sudo ngrokd --config=/etc/ngrokd/config.yml
 ```
+
+### 4. Set API Key
+
+```bash
+echo '{"command":"set-api-key","args":["YOUR_API_KEY"]}' | \
+  nc -U /var/run/ngrokd.sock
+```
+
+### 5. Use Endpoints
+
+```bash
+# Endpoints are auto-discovered and accessible via hostname
+curl http://my-api.ngrok.app/health
+```
+
+See [DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md) for detailed guide.
 
 ## Usage
 
@@ -309,27 +358,32 @@ See [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) for complete monitoring guide
 └── research.md            # Detailed research notes
 ```
 
-## Development Status
+## Features
 
-**Current Status**: Basic implementation complete
+**Daemon Mode** (Production):
+- ✅ **Virtual Network Interface**: Creates dedicated interface with configurable subnet
+- ✅ **Automatic IP Allocation**: Allocates IPs from `10.107.0.0/16` subnet
+- ✅ **DNS Management**: Automatically updates /etc/hosts for hostname resolution
+- ✅ **Dynamic Discovery**: Polls ngrok API every 30s for endpoint changes
+- ✅ **Persistent Mappings**: Same hostname gets same IP across restarts
+- ✅ **mTLS Authentication**: Automatic certificate provisioning
+- ✅ **Unix Socket Control**: Status, list, set-api-key commands
+- ✅ **Health Monitoring**: `/health`, `/ready`, `/status` endpoints
+- ✅ **Platform Support**: Linux (full), macOS (full), Windows (planned)
+- ✅ **Systemd/LaunchDaemon**: Production-ready service files
 
-**Features**:
-- ✅ **mTLS Authentication**: Automatic certificate provisioning and management
-- ✅ **Auto-Discovery**: `ngrokd connect --all` discovers and connects to all endpoints
-- ✅ **Multi-Endpoint**: Support multiple endpoints in single agent via config file
-- ✅ **HTTP Header Rewriting**: Automatic Host header rewriting for HTTP/HTTPS
-- ✅ **Protocol Support**: HTTP, HTTPS, TCP, TLS, WebSockets
-- ✅ **Dual-Stack**: IPv4 and IPv6 support
-- ✅ **Health Monitoring**: `/health`, `/ready`, `/status` endpoints with metrics
-- ✅ **Colorful UI**: Terminal UI with formatted output
-- ✅ **Network Access**: Accepts connections from localhost and network
-- ✅ **YAML Configuration**: Full configuration file support
-- ✅ **Platform Agnostic**: Works on Linux, macOS, Windows, Docker
+**Protocol Support**:
+- ✅ HTTP/HTTPS with automatic Host header rewriting
+- ✅ TCP raw connections
+- ✅ TLS-wrapped connections
+- ✅ WebSockets over HTTP/HTTPS
+- ✅ IPv4/IPv6 dual-stack
 
 **Future Enhancements**:
+- ⏳ Windows virtual interface support (WinTun)
 - ⏳ Connection retry logic with exponential backoff
 - ⏳ Certificate rotation support
-- ⏳ Docker image with multi-arch support
+- ✅ Docker image with multi-arch support
 - ⏳ Prometheus metrics exporter
 
 ## Certificate Provisioning

@@ -1,0 +1,12 @@
+"level"=0 "msg"="Starting ngrokd daemon"
+"level"=0 "msg"="Creating virtual network interface (macOS utun)" "name"="ngrokd0" "subnet"="10.107.0.0/16"
+"msg"="Failed to create utun interface, falling back to loopback aliases" "error"="failed to connect to utun control (tried 0-99): operation not permitted"
+"level"=0 "msg"="Using loopback aliases (fallback mode)"
+"level"=0 "msg"="Failed to create loopback alias (may need sudo)" "error"="exit status 1"
+"level"=0 "msg"="Unix socket server started" "path"="/tmp/ngrokd-test.sock"
+"level"=0 "msg"="Starting health check server" "address"="127.0.0.1:8081"
+"level"=0 "msg"="Not registered and no API key provided"
+"level"=0 "msg"="Waiting for API key via: ngrok daemon set-api-key <KEY>"
+"level"=0 "msg"="Socket listening at" "path"="/tmp/ngrokd-test.sock"
+"level"=0 "msg"="Daemon started successfully"
+"level"=1 "msg"="Received command" "command"="status" "args"=[]
