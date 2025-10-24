@@ -1,0 +1,45 @@
+# Binaries
+ngrokd
+ngrok-forward-proxy
+ngrok-list-endpoints
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Certificates and keys
+*.crt
+*.key
+*.pem
+certs/
+
+# Config files with secrets
+config.yaml
+config.yml
+!config.example.yaml
+!config.minimal.yaml
+!config.multi-endpoint.yaml
+*.env
+
+# OS
+.DS_Store
+Thumbs.db

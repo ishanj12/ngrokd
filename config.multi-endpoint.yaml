@@ -1,0 +1,42 @@
+# Multi-endpoint configuration example
+# Forwards multiple services simultaneously
+
+agent:
+  description: "Production forward proxy"
+  region: "us"
+
+endpoints:
+  # Frontend application
+  - name: "frontend"
+    uri: "https://app.company.ngrok.app"
+    local_port: 3000
+    enabled: true
+
+  # Backend API
+  - name: "backend-api"
+    uri: "https://api.company.ngrok.app"
+    local_port: 8080
+    enabled: true
+
+  # Admin panel
+  - name: "admin"
+    uri: "https://admin.company.ngrok.app"
+    local_port: 8081
+    enabled: true
+
+  # Metrics endpoint
+  - name: "metrics"
+    uri: "https://metrics.company.ngrok.app"
+    local_port: 9090
+    enabled: true
+
+  # Database proxy (disabled in this environment)
+  - name: "database"
+    uri: "tcp://db.company.ngrok.app"
+    port: 5432
+    local_port: 5432
+    enabled: false
+
+logging:
+  level: "info"
+  verbose: true
