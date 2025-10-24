@@ -46,7 +46,6 @@ config.multi-endpoint.yaml
 LIMITATIONS.md
 EXAMPLES.md
 FEATURES.md
-USAGE.md
 research.md
 
 # OS
@@ -81,6 +80,5 @@ MACOS_SETUP.md
 NETWORK_MODE.md
 QUICKSTART.md
 TEST_MANUAL.md
-USAGE.md
 VIRTUAL_INTERFACE.md
 research.md
