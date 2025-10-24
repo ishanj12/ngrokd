@@ -33,9 +33,9 @@ Your Backend Service
 ### Multi-Endpoint on Same Port
 ```bash
 # All on port 80, different IPs - no port conflicts!
-curl http://api.company.ngrok.app/      # → 127.0.0.2:80
-curl http://web.company.ngrok.app/      # → 127.0.0.3:80
-curl http://database.company.ngrok.app/ # → 127.0.0.4:80
+curl http://api.identifier/      # → 127.0.0.2:80
+curl http://web.identifier/      # → 127.0.0.3:80
+curl http://database.identifier/ # → 127.0.0.4:80
 ```
 
 ### Network Accessibility (Optional)
@@ -167,9 +167,9 @@ Creates interface with subnet for unique IP allocation:
 
 Each discovered endpoint gets a unique IP:
 ```
-10.107.0.2 → api.company.ngrok.app
-10.107.0.3 → web.company.ngrok.app
-10.107.0.4 → db.company.ngrok.app
+10.107.0.2 → api.identifier
+10.107.0.3 → web.identifier
+10.107.0.4 → db.identifier
 ```
 
 ### 3. DNS Management
@@ -177,8 +177,8 @@ Each discovered endpoint gets a unique IP:
 Automatically updates /etc/hosts:
 ```
 # BEGIN ngrokd managed section
-10.107.0.2    api.company.ngrok.app
-10.107.0.3    web.company.ngrok.app
+10.107.0.2    api.identifier
+10.107.0.3    web.identifier
 # END ngrokd managed section
 ```
 
@@ -216,28 +216,6 @@ Creates dual listeners:
 - Local: Unique IP, original port
 - Network: 0.0.0.0, sequential ports
 
-## Use Cases
-
-### Local Development
-Multiple services on same port via different IPs:
-```bash
-curl http://api.dev.ngrok.app/
-curl http://database.dev.ngrok.app/
-```
-
-### Team Collaboration
-Remote team members access via network:
-```bash
-curl http://dev-server:9080/  # api endpoint
-curl http://dev-server:9081/  # database endpoint
-```
-
-### CI/CD Testing
-CI runners connect to staging endpoints:
-```bash
-API_URL=http://ci-server:9080 npm test
-```
-
 ## Requirements
 
 - **ngrok API Key** - Get from https://dashboard.ngrok.com/api
@@ -245,13 +223,7 @@ API_URL=http://ci-server:9080 npm test
 - **Root/sudo** - Required for network interface and /etc/hosts
 - **Linux or macOS** - Windows planned
 
-## Security
 
-- ✅ **mTLS authentication** - Certificate-based identity
-- ✅ **Encrypted traffic** - TLS to ngrok cloud
-- ✅ **Auto-provisioning** - Certificates managed automatically
-- ✅ **Local-only default** - Network mode optional
-- ✅ **Firewall friendly** - Configurable ports
 
 ## Files Created
 
@@ -268,10 +240,6 @@ API_URL=http://ci-server:9080 npm test
 
 /etc/hosts              # Auto-managed DNS entries
 ```
-
-## License
-
-TBD
 
 ## Credits
 
