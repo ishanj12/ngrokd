@@ -52,3 +52,9 @@ research.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Development/design docs (keep local)
+DESIGN.md
+DAEMON_STATUS.md
+TEST_MANUAL.md
+config.daemon.yaml
