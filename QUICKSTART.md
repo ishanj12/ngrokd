@@ -1,5 +1,60 @@
 # Quick Start Guide
 
+## Installation
+
+### Linux
+```bash
+# Download and build
+git clone https://github.com/ishanj12/ngrokd.git
+cd ngrokd
+go build -o ngrokd ./cmd/ngrokd
+
+# Install to /usr/local/bin
+sudo mv ngrokd /usr/local/bin/
+ngrokd version
+```
+
+**Or use the install script:**
+```bash
+./install.sh
+```
+
+### macOS
+```bash
+# Download and build
+git clone https://github.com/ishanj12/ngrokd.git
+cd ngrokd
+go build -o ngrokd ./cmd/ngrokd
+
+# Install to /usr/local/bin
+sudo mv ngrokd /usr/local/bin/
+ngrokd version
+```
+
+**Or use the install script:**
+```bash
+./install.sh
+```
+
+### Windows
+```powershell
+# Download and build
+git clone https://github.com/ishanj12/ngrokd.git
+cd ngrokd
+go build -o ngrokd.exe ./cmd/ngrokd
+
+# Move to a directory in your PATH
+move ngrokd.exe C:\Windows\System32\
+ngrokd version
+```
+
+**Or add to PATH:**
+```powershell
+# Add current directory to PATH
+$env:Path += ";$PWD"
+ngrokd version
+```
+
 ## 1. Get Your API Key
 
 Get your ngrok API key from: https://dashboard.ngrok.com/api

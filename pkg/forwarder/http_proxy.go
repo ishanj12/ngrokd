@@ -2,7 +2,6 @@ package forwarder
 
 import (
 	"bufio"
-	"bytes"
 	"io"
 	"net"
 	"net/http"
@@ -60,25 +59,4 @@ func rawProxy(localConn, ngrokConn net.Conn) error {
 	}()
 
 	return <-errChan
-}
-
-// peekProtocol peeks at the first few bytes to detect HTTP
-func peekProtocol(conn net.Conn) ([]byte, bool) {
-	buf := make([]byte, 16)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return nil, false
-	}
-
-	data := buf[:n]
-	
-	// Check for HTTP methods
-	httpMethods := []string{"GET ", "POST", "PUT ", "DELE", "HEAD", "PATC", "OPTI", "CONN"}
-	for _, method := range httpMethods {
-		if bytes.HasPrefix(data, []byte(method)) {
-			return data, true
-		}
-	}
-
-	return data, false
 }

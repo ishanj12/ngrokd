@@ -26,7 +26,7 @@ func NewProvisioner(certDir string) *Provisioner {
 }
 
 // GenerateKeyAndCSR generates a new ECDSA P-384 private key and CSR
-func (p *Provisioner) GenerateKeyAndCSR(commonName string) (privateKeyPEM, csrPEM []byte, err error) {
+func (p *Provisioner) GenerateKeyAndCSR() (privateKeyPEM, csrPEM []byte, err error) {
 	// Generate ECDSA P-384 private key (same as operator)
 	privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	if err != nil {

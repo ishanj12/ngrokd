@@ -71,8 +71,7 @@ func (m *Manager) provisionCertificate(ctx context.Context, config Config) (tls.
 	// Step 1: Generate private key and CSR
 	m.logger.Info("Generating private key and CSR")
 
-	commonName := "ngrok-forward-proxy"
-	privateKeyPEM, csrPEM, err := m.provisioner.GenerateKeyAndCSR(commonName)
+	privateKeyPEM, csrPEM, err := m.provisioner.GenerateKeyAndCSR()
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("failed to generate key and CSR: %w", err)
 	}
