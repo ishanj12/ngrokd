@@ -40,11 +40,13 @@ type StatusResponse struct {
 
 // EndpointInfo contains bound endpoint information
 type EndpointInfo struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
-	Port     int    `json:"port"`
-	URL      string `json:"url"`
+	ID            string `json:"id"`
+	Hostname      string `json:"hostname"`
+	IP            string `json:"ip"`
+	Port          int    `json:"port"`
+	URL           string `json:"url"`
+	LocalListener bool   `json:"local_listener"`   // True if local IP listener is active
+	NetworkPort   int    `json:"network_port"`     // Network port if network mode enabled
 }
 
 // Server handles unix socket communication

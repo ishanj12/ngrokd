@@ -353,14 +353,27 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	}
 	
 	ctx := context.Background()
+	localListenerOK := true
 	if err := d.listenerMgr.StartListener(ctx, endpoint); err != nil {
-		d.logger.Error(err, "Failed to start listener", "endpoint", ep.URL)
-		return
+		d.logger.Error(err, "⚠️  Port conflict - local listener failed", 
+			"endpoint", ep.URL, 
+			"port", port,
+			"ip", ipStr)
+		
+		if d.config.Net.NetworkAccessible {
+			d.logger.Info("Endpoint will be available via network port only")
+		} else {
+			d.logger.Error(err, "⚠️  Endpoint unavailable - enable network_accessible mode for fallback")
+		}
+		
+		localListenerOK = false
+		// Don't return - continue to create network listener if enabled
 	}
 	
 	// If network accessible, create second listener on 0.0.0.0 with unique port
+	networkPort := 0
 	if d.config.Net.NetworkAccessible {
-		networkPort := d.nextPort
+		networkPort = d.nextPort
 		d.nextPort++
 		
 		networkEndpoint := forwarder.BoundEndpoint{
@@ -373,25 +386,42 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		
 		if err := d.listenerMgr.StartListener(ctx, networkEndpoint); err != nil {
 			d.logger.Error(err, "Failed to start network listener", "endpoint", ep.URL, "port", networkPort)
-			// Don't fail - primary listener still works
+			networkPort = 0 // Failed to bind network port too
 		} else {
-			d.logger.Info("Started network listener",
-				"endpoint", ep.URL,
-				"address", fmt.Sprintf("0.0.0.0:%d", networkPort),
-				"accessible_from", "network")
+			if !localListenerOK {
+				d.logger.Info("✓ Endpoint available via network port only",
+					"endpoint", ep.URL,
+					"port", networkPort,
+					"access", fmt.Sprintf("http://YOUR_IP:%d/", networkPort))
+			} else {
+				d.logger.Info("Started network listener",
+					"endpoint", ep.URL,
+					"address", fmt.Sprintf("0.0.0.0:%d", networkPort),
+					"accessible_from", "network")
+			}
 		}
+	}
+	
+	// If no listeners succeeded, log critical error and return
+	if !localListenerOK && networkPort == 0 {
+		d.logger.Error(nil, "❌ Endpoint completely unavailable - all listeners failed",
+			"endpoint", ep.URL,
+			"suggestion", "Check for port conflicts or enable network_accessible mode")
+		return
 	}
 	
 	// Register with health server
 	d.healthServer.RegisterEndpoint(ep.ID, fmt.Sprintf("%s:%d", ipStr, port), ep.URL)
 	
-	// Track endpoint
+	// Track endpoint with listener status
 	d.endpoints[ep.ID] = socket.EndpointInfo{
-		ID:       ep.ID,
-		Hostname: hostname,
-		IP:       ipStr,
-		Port:     port,
-		URL:      ep.URL,
+		ID:            ep.ID,
+		Hostname:      hostname,
+		IP:            ipStr,
+		Port:          port,
+		URL:           ep.URL,
+		LocalListener: localListenerOK,
+		NetworkPort:   networkPort,
 	}
 	
 	d.logger.Info("Added bound endpoint",

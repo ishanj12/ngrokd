@@ -34,11 +34,13 @@ type StatusData struct {
 }
 
 type EndpointInfo struct {
-	ID       string `json:"id"`
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
-	Port     int    `json:"port"`
-	URL      string `json:"url"`
+	ID            string `json:"id"`
+	Hostname      string `json:"hostname"`
+	IP            string `json:"ip"`
+	Port          int    `json:"port"`
+	URL           string `json:"url"`
+	LocalListener bool   `json:"local_listener"`
+	NetworkPort   int    `json:"network_port"`
 }
 
 func main() {
@@ -192,12 +194,26 @@ func cmdList() {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  HOSTNAME\tIP\tPORT\tURL")
-	fmt.Fprintln(w, "  --------\t--\t----\t---")
+	fmt.Fprintln(w, "  HOSTNAME\tIP:PORT\tNETWORK\tSTATUS")
+	fmt.Fprintln(w, "  --------\t-------\t-------\t------")
 	
 	for _, ep := range endpoints {
-		fmt.Fprintf(w, "  %s\t%s\t%d\t%s\n", 
-			ep.Hostname, ep.IP, ep.Port, ep.URL)
+		// Determine status
+		status := "✓ Full"
+		if !ep.LocalListener && ep.NetworkPort > 0 {
+			status = "⚠ Network Only"
+		} else if !ep.LocalListener && ep.NetworkPort == 0 {
+			status = "❌ Unavailable"
+		}
+		
+		// Network port display
+		networkPort := "-"
+		if ep.NetworkPort > 0 {
+			networkPort = fmt.Sprintf(":%d", ep.NetworkPort)
+		}
+		
+		fmt.Fprintf(w, "  %s\t%s:%d\t%s\t%s\n", 
+			ep.Hostname, ep.IP, ep.Port, networkPort, status)
 	}
 	w.Flush()
 	
