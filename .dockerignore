@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+
+# Documentation (internal)
+*.md
+!README.md
+
+# Build artifacts
+ngrokd
+ngrokctl
+*.log
+
+# Test files
+test-*
+*-test.*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+
+# Temporary files
+tmp/
+temp/
