@@ -194,8 +194,8 @@ func cmdList() {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  HOSTNAME\tIP:PORT\tNETWORK\tSTATUS")
-	fmt.Fprintln(w, "  --------\t-------\t-------\t------")
+	fmt.Fprintln(w, "  URL\tIP:PORT\tNETWORK\tSTATUS")
+	fmt.Fprintln(w, "  ---\t-------\t-------\t------")
 	
 	for _, ep := range endpoints {
 		// Determine status
@@ -213,7 +213,7 @@ func cmdList() {
 		}
 		
 		fmt.Fprintf(w, "  %s\t%s:%d\t%s\t%s\n", 
-			ep.Hostname, ep.IP, ep.Port, networkPort, status)
+			ep.URL, ep.IP, ep.Port, networkPort, status)
 	}
 	w.Flush()
 	
