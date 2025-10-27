@@ -67,7 +67,11 @@ func main() {
 		}
 		cmdSetAPIKey(os.Args[2])
 	case "config":
-		cmdConfig()
+		if len(os.Args) < 3 || os.Args[2] != "edit" {
+			fmt.Println("Usage: ngrokctl config edit")
+			os.Exit(1)
+		}
+		cmdConfigEdit()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -88,7 +92,7 @@ func printUsage() {
 	fmt.Println("  list                List discovered bound endpoints")
 	fmt.Println("  health              Check daemon health")
 	fmt.Println("  set-api-key <KEY>   Set ngrok API key")
-	fmt.Println("  config              Open config file in editor")
+	fmt.Println("  config edit         Open config file in editor")
 	fmt.Println("  help                Show this help message")
 	fmt.Println()
 	fmt.Println("Environment:")
@@ -283,7 +287,7 @@ func cmdSetAPIKey(apiKey string) {
 	fmt.Println("Run 'ngrokctl status' to check registration status")
 }
 
-func cmdConfig() {
+func cmdConfigEdit() {
 	configPath := "/etc/ngrokd/config.yml"
 	
 	// Check if file exists
