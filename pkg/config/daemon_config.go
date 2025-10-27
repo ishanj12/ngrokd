@@ -38,10 +38,10 @@ type BoundEndpointsConfig struct {
 
 // NetConfig holds network interface settings
 type NetConfig struct {
-	InterfaceName     string `yaml:"interface_name,omitempty"`
-	Subnet            string `yaml:"subnet,omitempty"`
-	NetworkAccessible bool   `yaml:"network_accessible,omitempty"` // Bind to 0.0.0.0 for network access
-	StartPort         int    `yaml:"start_port,omitempty"`         // Starting port for network mode
+	InterfaceName   string `yaml:"interface_name,omitempty"`
+	Subnet          string `yaml:"subnet,omitempty"`
+	ListenInterface string `yaml:"listen_interface,omitempty"` // "virtual", "0.0.0.0", or specific IP
+	StartPort       int    `yaml:"start_port,omitempty"`       // Starting port for non-virtual modes
 }
 
 // LoadDaemonConfig loads daemon configuration from file
@@ -94,7 +94,10 @@ func (c *DaemonConfig) setDefaults() {
 	if c.Net.Subnet == "" {
 		c.Net.Subnet = "10.107.0.0/16"
 	}
+	if c.Net.ListenInterface == "" {
+		c.Net.ListenInterface = "virtual"
+	}
 	if c.Net.StartPort == 0 {
-		c.Net.StartPort = 8080
+		c.Net.StartPort = 9080
 	}
 }

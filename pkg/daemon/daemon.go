@@ -343,71 +343,66 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		}
 	}
 	
-	// Create primary listener on unique IP (for local multi-port access)
+	// Determine listen address and port based on mode
+	var listenAddr string
+	var listenPort int
+	virtualMode := d.config.Net.ListenInterface == "virtual"
+	
+	if virtualMode {
+		// Virtual mode: unique IP, original port
+		listenAddr = ipStr
+		listenPort = port
+	} else {
+		// Network mode: specific interface, sequential port
+		listenAddr = d.config.Net.ListenInterface
+		listenPort = d.nextPort
+		d.nextPort++
+	}
+	
+	// Create listener
 	endpoint := forwarder.BoundEndpoint{
 		Name:         ep.ID,
 		URI:          ep.URL,
 		Port:         port,
-		LocalPort:    port,
-		LocalAddress: ipStr,
+		LocalPort:    listenPort,
+		LocalAddress: listenAddr,
 	}
 	
 	ctx := context.Background()
 	localListenerOK := true
+	networkPort := 0
+	
 	if err := d.listenerMgr.StartListener(ctx, endpoint); err != nil {
-		d.logger.Error(err, "⚠️  Port conflict - local listener failed", 
+		d.logger.Error(err, "⚠️  Failed to start listener", 
 			"endpoint", ep.URL, 
-			"port", port,
-			"ip", ipStr)
-		
-		if d.config.Net.NetworkAccessible {
-			d.logger.Info("Endpoint will be available via network port only")
-		} else {
-			d.logger.Error(err, "⚠️  Endpoint unavailable - enable network_accessible mode for fallback")
-		}
+			"port", listenPort,
+			"address", listenAddr)
 		
 		localListenerOK = false
-		// Don't return - continue to create network listener if enabled
-	}
-	
-	// If network accessible, create second listener on 0.0.0.0 with unique port
-	networkPort := 0
-	if d.config.Net.NetworkAccessible {
-		networkPort = d.nextPort
-		d.nextPort++
 		
-		networkEndpoint := forwarder.BoundEndpoint{
-			Name:         ep.ID + "-network",
-			URI:          ep.URL,
-			Port:         port,
-			LocalPort:    networkPort,
-			LocalAddress: "0.0.0.0",
+		if virtualMode {
+			d.logger.Error(err, "⚠️  Endpoint unavailable - port conflict on unique IP")
 		}
-		
-		if err := d.listenerMgr.StartListener(ctx, networkEndpoint); err != nil {
-			d.logger.Error(err, "Failed to start network listener", "endpoint", ep.URL, "port", networkPort)
-			networkPort = 0 // Failed to bind network port too
-		} else {
-			if !localListenerOK {
-				d.logger.Info("✓ Endpoint available via network port only",
-					"endpoint", ep.URL,
-					"port", networkPort,
-					"access", fmt.Sprintf("http://YOUR_IP:%d/", networkPort))
-			} else {
-				d.logger.Info("Started network listener",
-					"endpoint", ep.URL,
-					"address", fmt.Sprintf("0.0.0.0:%d", networkPort),
-					"accessible_from", "network")
-			}
-		}
-	}
-	
-	// If no listeners succeeded, log critical error and return
-	if !localListenerOK && networkPort == 0 {
-		d.logger.Error(nil, "❌ Endpoint completely unavailable - all listeners failed",
-			"endpoint", ep.URL,
-			"suggestion", "Check for port conflicts or enable network_accessible mode")
 		return
+	}
+	
+	// Track network port if not in virtual mode
+	if !virtualMode {
+		networkPort = listenPort
+	}
+	
+	// Log success
+	if virtualMode {
+		d.logger.Info("Started listener",
+			"endpoint", ep.URL,
+			"address", fmt.Sprintf("%s:%d", listenAddr, listenPort),
+			"mode", "virtual")
+	} else {
+		d.logger.Info("Started listener",
+			"endpoint", ep.URL,
+			"address", fmt.Sprintf("%s:%d", listenAddr, listenPort),
+			"mode", "network",
+			"accessible_from", d.config.Net.ListenInterface)
 	}
 	
 	// Register with health server
