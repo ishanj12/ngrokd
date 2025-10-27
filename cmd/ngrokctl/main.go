@@ -220,13 +220,6 @@ func cmdList() {
 	fmt.Println()
 	fmt.Printf("  Total: %d endpoint(s)\n", len(endpoints))
 	fmt.Println()
-	fmt.Println("  Test connection:")
-	for i, ep := range endpoints {
-		if i < 3 { // Show first 3
-			fmt.Printf("    curl http://%s/\n", ep.Hostname)
-		}
-	}
-	fmt.Println()
 }
 
 func cmdHealth() {
