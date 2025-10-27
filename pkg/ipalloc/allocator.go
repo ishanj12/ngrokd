@@ -61,7 +61,14 @@ func (a *Allocator) AllocateIP(hostname string) (string, error) {
 	maxAttempts := 65000 // Reasonable limit
 	for attempts := 0; attempts < maxAttempts; attempts++ {
 		ipStr := ip.String()
-		if !a.isIPAllocated(ipStr) && a.subnet.Contains(ip) {
+		
+		// Convert to 4-byte representation for proper subnet checking
+		ip4 := ip.To4()
+		if ip4 == nil {
+			ip4 = ip
+		}
+		
+		if !a.isIPAllocated(ipStr) && a.subnet.Contains(ip4) {
 			// Found available IP
 			a.allocated[hostname] = ipStr
 			
@@ -76,7 +83,11 @@ func (a *Allocator) AllocateIP(hostname string) (string, error) {
 		incrementIP(ip)
 		
 		// Check if we've wrapped around past the subnet
-		if !a.subnet.Contains(ip) {
+		ip4 = ip.To4()
+		if ip4 == nil {
+			ip4 = ip
+		}
+		if !a.subnet.Contains(ip4) {
 			return "", fmt.Errorf("exhausted IP range in subnet %s", a.subnet.String())
 		}
 	}
@@ -152,17 +163,22 @@ func (a *Allocator) LoadPersistentMappings(path string) error {
 	var maxIP net.IP
 	for _, ipStr := range mappings {
 		ip := net.ParseIP(ipStr)
-		if ip != nil && a.subnet.Contains(ip) {
-			if maxIP == nil || compareIP(ip, maxIP) > 0 {
-				maxIP = make(net.IP, len(ip))
-				copy(maxIP, ip)
+		if ip != nil {
+			// Convert to 4-byte for proper comparison
+			ip4 := ip.To4()
+			if ip4 != nil && a.subnet.Contains(ip4) {
+				if maxIP == nil || compareIP(ip4, maxIP) > 0 {
+					maxIP = make(net.IP, len(ip4))
+					copy(maxIP, ip4)
+				}
 			}
 		}
 	}
 	
 	if maxIP != nil {
 		incrementIP(maxIP)
-		copy(a.nextIP, maxIP)
+		a.nextIP = maxIP
+		a.logger.Info("Resuming IP allocation from", "nextIP", maxIP.String())
 	}
 	
 	a.logger.Info("Loaded persistent IP mappings", "count", len(mappings))
