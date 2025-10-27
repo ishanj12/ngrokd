@@ -13,11 +13,13 @@ import (
 
 // Allocator manages IP address allocation from a subnet
 type Allocator struct {
-	subnet    *net.IPNet
-	nextIP    net.IP
-	allocated map[string]string // hostname -> IP
-	mu        sync.RWMutex
-	logger    logr.Logger
+	subnet       *net.IPNet
+	nextIP       net.IP
+	allocated    map[string]string      // hostname -> IP (for backwards compat)
+	portsByIP    map[string]map[int]bool // IP -> set of ports in use
+	hostnameByIP map[string][]string    // IP -> hostnames using it
+	mu           sync.RWMutex
+	logger       logr.Logger
 }
 
 // NewAllocator creates a new IP allocator
@@ -35,22 +37,46 @@ func NewAllocator(subnet string, logger logr.Logger) *Allocator {
 	startIP[len(startIP)-1] = 2
 	
 	return &Allocator{
-		subnet:    ipnet,
-		nextIP:    startIP,
-		allocated: make(map[string]string),
-		logger:    logger,
+		subnet:       ipnet,
+		nextIP:       startIP,
+		allocated:    make(map[string]string),
+		portsByIP:    make(map[string]map[int]bool),
+		hostnameByIP: make(map[string][]string),
+		logger:       logger,
 	}
 }
 
-// AllocateIP allocates an IP for a hostname
-// Reuses existing IP if hostname was previously allocated
-func (a *Allocator) AllocateIP(hostname string) (string, error) {
+// AllocateIPForPort allocates an IP for a hostname and port
+// Reuses existing IPs when port is available
+func (a *Allocator) AllocateIPForPort(hostname string, port int) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	
-	// Check if already allocated
+	// Check if already allocated for this hostname
 	if ip, exists := a.allocated[hostname]; exists {
+		// Mark port as used on this IP
+		if a.portsByIP[ip] == nil {
+			a.portsByIP[ip] = make(map[int]bool)
+		}
+		a.portsByIP[ip][port] = true
 		return ip, nil
+	}
+	
+	// Try to find an existing IP with the port available
+	for ip, ports := range a.portsByIP {
+		if !ports[port] {
+			// Found IP with port available - reuse it!
+			a.allocated[hostname] = ip
+			a.portsByIP[ip][port] = true
+			a.hostnameByIP[ip] = append(a.hostnameByIP[ip], hostname)
+			
+			a.logger.Info("Reused IP with different port", 
+				"hostname", hostname, 
+				"ip", ip, 
+				"port", port,
+				"shared_ip", true)
+			return ip, nil
+		}
 	}
 	
 	// Find next available IP
@@ -72,11 +98,18 @@ func (a *Allocator) AllocateIP(hostname string) (string, error) {
 			// Found available IP
 			a.allocated[hostname] = ipStr
 			
+			// Track port usage
+			if a.portsByIP[ipStr] == nil {
+				a.portsByIP[ipStr] = make(map[int]bool)
+			}
+			a.portsByIP[ipStr][port] = true
+			a.hostnameByIP[ipStr] = []string{hostname}
+			
 			// Increment for next allocation
 			incrementIP(ip)
 			copy(a.nextIP, ip)
 			
-			a.logger.Info("Allocated IP", "hostname", hostname, "ip", ipStr)
+			a.logger.Info("Allocated new IP", "hostname", hostname, "ip", ipStr, "port", port)
 			return ipStr, nil
 		}
 		
@@ -132,10 +165,31 @@ func (a *Allocator) ReleaseIP(hostname string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	
-	if ip, exists := a.allocated[hostname]; exists {
-		delete(a.allocated, hostname)
-		a.logger.Info("Released IP", "hostname", hostname, "ip", ip)
+	ip, exists := a.allocated[hostname]
+	if !exists {
+		return
 	}
+	
+	delete(a.allocated, hostname)
+	
+	// Remove from hostname tracking
+	if hostnames, ok := a.hostnameByIP[ip]; ok {
+		filtered := []string{}
+		for _, h := range hostnames {
+			if h != hostname {
+				filtered = append(filtered, h)
+			}
+		}
+		if len(filtered) == 0 {
+			// No more hostnames using this IP - clean up completely
+			delete(a.hostnameByIP, ip)
+			delete(a.portsByIP, ip)
+		} else {
+			a.hostnameByIP[ip] = filtered
+		}
+	}
+	
+	a.logger.Info("Released hostname from IP", "hostname", hostname, "ip", ip)
 }
 
 // LoadPersistentMappings loads hostname->IP mappings from disk

@@ -322,10 +322,10 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		return
 	}
 	
-	// Allocate IP for hostname
-	ipStr, err := d.ipAllocator.AllocateIP(hostname)
+	// Allocate IP for hostname and port (reuses IP if port available)
+	ipStr, err := d.ipAllocator.AllocateIPForPort(hostname, port)
 	if err != nil {
-		d.logger.Error(err, "Failed to allocate IP", "hostname", hostname)
+		d.logger.Error(err, "Failed to allocate IP", "hostname", hostname, "port", port)
 		return
 	}
 	
