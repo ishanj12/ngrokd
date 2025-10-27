@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"text/tabwriter"
 )
 
@@ -65,6 +66,8 @@ func main() {
 			os.Exit(1)
 		}
 		cmdSetAPIKey(os.Args[2])
+	case "config":
+		cmdConfig()
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -85,6 +88,7 @@ func printUsage() {
 	fmt.Println("  list                List discovered bound endpoints")
 	fmt.Println("  health              Check daemon health")
 	fmt.Println("  set-api-key <KEY>   Set ngrok API key")
+	fmt.Println("  config              Open config file in editor")
 	fmt.Println("  help                Show this help message")
 	fmt.Println()
 	fmt.Println("Environment:")
@@ -277,4 +281,35 @@ func cmdSetAPIKey(apiKey string) {
 	fmt.Println("  3. Start polling for bound endpoints")
 	fmt.Println()
 	fmt.Println("Run 'ngrokctl status' to check registration status")
+}
+
+func cmdConfig() {
+	configPath := "/etc/ngrokd/config.yml"
+	
+	// Check if file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		fmt.Printf("Config file not found: %s\n", configPath)
+		os.Exit(1)
+	}
+	
+	// Get editor from environment or use default
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vim" // Default to vim
+	}
+	
+	// Execute editor
+	fmt.Printf("Opening %s with %s...\n", configPath, editor)
+	cmd := exec.Command("sudo", editor, configPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("Error opening config: %v\n", err)
+		os.Exit(1)
+	}
 }
