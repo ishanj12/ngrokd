@@ -70,7 +70,7 @@ EOF
 sudo ngrokd --config=/etc/ngrokd/config.yml
 
 # Or run in background
-sudo ngrokd --config=/etc/ngrokd/config.yml > /var/log/ngrokd.log 2>&1 &
+sudo ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
 ```
 
 ### Step 4: Set API Key
