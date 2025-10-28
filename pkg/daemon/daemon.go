@@ -21,6 +21,7 @@ import (
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/netif"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/socket"
+	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
 )
 
@@ -154,6 +155,9 @@ func (d *Daemon) Start() error {
 		}
 		go d.pollingLoop()
 	}
+	
+	// Start config file watcher for auto-reload
+	go d.watchConfig()
 	
 	// Run forever
 	d.logger.Info("Daemon started successfully")
@@ -315,6 +319,80 @@ func (d *Daemon) isMacOS() bool {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func (d *Daemon) watchConfig() {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		d.logger.Error(err, "Failed to create config watcher")
+		return
+	}
+	defer watcher.Close()
+	
+	// Watch config file
+	if err := watcher.Add(d.configPath); err != nil {
+		d.logger.Error(err, "Failed to watch config file", "path", d.configPath)
+		return
+	}
+	
+	d.logger.Info("Watching config file for changes", "path", d.configPath)
+	
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			
+			// Config file modified
+			if event.Op&fsnotify.Write == fsnotify.Write {
+				d.logger.Info("Config file changed, reloading...", "path", event.Name)
+				d.reloadConfig()
+			}
+			
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			d.logger.Error(err, "Config watcher error")
+		}
+	}
+}
+
+func (d *Daemon) reloadConfig() {
+	// Load new config
+	newCfg, err := config.LoadDaemonConfig(d.configPath)
+	if err != nil {
+		d.logger.Error(err, "Failed to reload config")
+		return
+	}
+	
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	// Update settings that can be hot-reloaded
+	oldPollInterval := d.config.BoundEndpoints.PollInterval
+	oldOverrides := d.config.Net.Overrides
+	
+	d.config.BoundEndpoints.PollInterval = newCfg.BoundEndpoints.PollInterval
+	d.config.Net.Overrides = newCfg.Net.Overrides
+	d.config.Net.ListenInterface = newCfg.Net.ListenInterface
+	
+	// Log what changed
+	if oldPollInterval != newCfg.BoundEndpoints.PollInterval {
+		d.logger.Info("✓ Poll interval updated",
+			"old", oldPollInterval,
+			"new", newCfg.BoundEndpoints.PollInterval)
+	}
+	
+	if fmt.Sprintf("%v", oldOverrides) != fmt.Sprintf("%v", newCfg.Net.Overrides) {
+		d.logger.Info("✓ Endpoint overrides updated",
+			"overrides", newCfg.Net.Overrides)
+		d.logger.Info("⚠️  New overrides will apply to newly discovered endpoints only")
+		d.logger.Info("   Existing endpoints keep their current configuration")
+	}
+	
+	d.logger.Info("Config reloaded successfully")
 }
 
 func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
