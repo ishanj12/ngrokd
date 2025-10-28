@@ -451,11 +451,31 @@ func (d *Daemon) getListenInterfaceForHostname(hostname string, overrides map[st
 }
 
 func (d *Daemon) rebindEndpoints(endpointIDs []string) {
-	// Trigger a poll and reconcile
-	// This will see the endpoints still exist in ngrok, compare with current state,
-	// remove old listeners, and create new ones with updated config
-	d.logger.Info("Triggering endpoint reconciliation for rebinding")
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	
+	for _, id := range endpointIDs {
+		ep, exists := d.endpoints[id]
+		if !exists {
+			continue
+		}
+		
+		// Stop existing listener
+		d.listenerMgr.StopListener(id)
+		d.logger.Info("Stopped listener for rebinding", "endpoint", ep.URL)
+		
+		// Remove from tracking temporarily
+		delete(d.endpoints, id)
+		
+		// Trigger immediate poll to recreate with new config
+		// The poll will discover the same endpoint and create with new settings
+	}
+	
+	// Unlock before poll (it needs lock)
+	d.mu.Unlock()
+	d.logger.Info("Triggering poll to recreate listeners with new config")
 	d.pollAndReconcile()
+	d.mu.Lock()
 }
 
 func (d *Daemon) loadNetworkPortMappings(path string) error {
