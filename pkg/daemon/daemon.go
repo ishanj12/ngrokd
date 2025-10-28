@@ -373,10 +373,12 @@ func (d *Daemon) reloadConfig() {
 	// Update settings that can be hot-reloaded
 	oldPollInterval := d.config.BoundEndpoints.PollInterval
 	oldOverrides := d.config.Net.Overrides
+	oldListenInterface := d.config.Net.ListenInterface
 	
 	d.config.BoundEndpoints.PollInterval = newCfg.BoundEndpoints.PollInterval
 	d.config.Net.Overrides = newCfg.Net.Overrides
 	d.config.Net.ListenInterface = newCfg.Net.ListenInterface
+	d.config.Net.StartPort = newCfg.Net.StartPort
 	
 	// Log what changed
 	if oldPollInterval != newCfg.BoundEndpoints.PollInterval {
@@ -385,14 +387,57 @@ func (d *Daemon) reloadConfig() {
 			"new", newCfg.BoundEndpoints.PollInterval)
 	}
 	
-	if fmt.Sprintf("%v", oldOverrides) != fmt.Sprintf("%v", newCfg.Net.Overrides) {
-		d.logger.Info("✓ Endpoint overrides updated",
-			"overrides", newCfg.Net.Overrides)
-		d.logger.Info("⚠️  New overrides will apply to newly discovered endpoints only")
-		d.logger.Info("   Existing endpoints keep their current configuration")
+	// Check if listen interfaces changed for existing endpoints
+	overridesChanged := fmt.Sprintf("%v", oldOverrides) != fmt.Sprintf("%v", newCfg.Net.Overrides)
+	defaultChanged := oldListenInterface != newCfg.Net.ListenInterface
+	
+	if overridesChanged || defaultChanged {
+		d.logger.Info("✓ Listen interface configuration changed")
+		d.logger.Info("⚠️  Rebinding existing endpoints (active connections will drop)")
+		
+		// Rebind affected endpoints
+		endpointsToRebind := []string{}
+		
+		for id, ep := range d.endpoints {
+			// Check if this endpoint's listen interface changed
+			oldInterface := d.getListenInterfaceForHostname(ep.Hostname, oldOverrides, oldListenInterface)
+			newInterface := d.getListenInterfaceForHostname(ep.Hostname, newCfg.Net.Overrides, newCfg.Net.ListenInterface)
+			
+			if oldInterface != newInterface {
+				endpointsToRebind = append(endpointsToRebind, id)
+				d.logger.Info("Endpoint needs rebinding",
+					"hostname", ep.Hostname,
+					"old_interface", oldInterface,
+					"new_interface", newInterface)
+			}
+		}
+		
+		// Rebind endpoints (unlock during operations)
+		if len(endpointsToRebind) > 0 {
+			d.mu.Unlock()
+			d.rebindEndpoints(endpointsToRebind)
+			d.mu.Lock()
+			
+			d.logger.Info("✓ Rebinding complete", "count", len(endpointsToRebind))
+		}
 	}
 	
 	d.logger.Info("Config reloaded successfully")
+}
+
+func (d *Daemon) getListenInterfaceForHostname(hostname string, overrides map[string]string, defaultInterface string) string {
+	if override, exists := overrides[hostname]; exists {
+		return override
+	}
+	return defaultInterface
+}
+
+func (d *Daemon) rebindEndpoints(endpointIDs []string) {
+	// Trigger a poll and reconcile
+	// This will see the endpoints still exist in ngrok, compare with current state,
+	// remove old listeners, and create new ones with updated config
+	d.logger.Info("Triggering endpoint reconciliation for rebinding")
+	d.pollAndReconcile()
 }
 
 func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
