@@ -21,6 +21,7 @@ import (
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/netif"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/socket"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -44,6 +45,7 @@ type Daemon struct {
 	
 	operatorID   string
 	registered   bool
+	configPath   string
 	
 	mu           sync.RWMutex
 	endpoints    map[string]socket.EndpointInfo // endpoint ID -> info
@@ -58,10 +60,11 @@ func New(configPath string, logger logr.Logger) (*Daemon, error) {
 	}
 	
 	d := &Daemon{
-		config:    cfg,
-		logger:    logger,
-		endpoints: make(map[string]socket.EndpointInfo),
-		nextPort:  cfg.Net.StartPort,
+		config:     cfg,
+		logger:     logger,
+		configPath: configPath,
+		endpoints:  make(map[string]socket.EndpointInfo),
+		nextPort:   cfg.Net.StartPort,
 	}
 	
 	// Check if already registered
@@ -497,10 +500,20 @@ func (d *Daemon) ListEndpoints() []socket.EndpointInfo {
 
 func (d *Daemon) SetAPIKey(key string) error {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	
-	// Update config
+	// Update in-memory config
 	d.config.API.Key = key
+	
+	d.mu.Unlock()
+	
+	// Save to config file
+	if err := d.saveAPIKeyToConfig(key); err != nil {
+		d.logger.Error(err, "Failed to save API key to config file")
+		return fmt.Errorf("failed to save API key to config: %w", err)
+	}
+	
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	
 	// If not registered, register now
 	if !d.registered {
@@ -520,5 +533,42 @@ func (d *Daemon) SetAPIKey(key string) error {
 		go d.pollingLoop()
 	}
 	
+	return nil
+}
+
+func (d *Daemon) saveAPIKeyToConfig(apiKey string) error {
+	// Read current config file
+	data, err := os.ReadFile(d.configPath)
+	if err != nil {
+		return err
+	}
+	
+	// Parse YAML
+	var cfg config.DaemonConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return err
+	}
+	
+	// Update API key
+	cfg.API.Key = apiKey
+	
+	// Write back
+	updatedData, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return err
+	}
+	
+	// Write atomically (temp + rename)
+	tempPath := d.configPath + ".tmp"
+	if err := os.WriteFile(tempPath, updatedData, 0600); err != nil {
+		return err
+	}
+	
+	if err := os.Rename(tempPath, d.configPath); err != nil {
+		os.Remove(tempPath)
+		return err
+	}
+	
+	d.logger.Info("API key saved to config file", "path", d.configPath)
 	return nil
 }
