@@ -5,7 +5,6 @@ package netif
 import (
 	"fmt"
 	"net"
-	"os/exec"
 
 	"github.com/go-logr/logr"
 	"github.com/vishvananda/netlink"
