@@ -347,9 +347,10 @@ func (d *Daemon) watchConfig() {
 	}
 	defer watcher.Close()
 	
-	// Watch config file
-	if err := watcher.Add(d.configPath); err != nil {
-		d.logger.Error(err, "Failed to watch config file", "path", d.configPath)
+	// Watch the directory (handles vim's rename-based saves)
+	configDir := filepath.Dir(d.configPath)
+	if err := watcher.Add(configDir); err != nil {
+		d.logger.Error(err, "Failed to watch config directory", "path", configDir)
 		return
 	}
 	
@@ -362,9 +363,16 @@ func (d *Daemon) watchConfig() {
 				return
 			}
 			
-			// Config file modified
-			if event.Op&fsnotify.Write == fsnotify.Write {
+			// Only care about changes to our config file
+			if event.Name != d.configPath {
+				continue
+			}
+			
+			// Config file modified or created (from rename)
+			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
 				d.logger.Info("Config file changed, reloading...", "path", event.Name)
+				// Small delay to ensure file is fully written
+				time.Sleep(100 * time.Millisecond)
 				d.reloadConfig()
 			}
 			
