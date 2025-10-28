@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -48,9 +49,10 @@ type Daemon struct {
 	registered   bool
 	configPath   string
 	
-	mu           sync.RWMutex
-	endpoints    map[string]socket.EndpointInfo // endpoint ID -> info
-	nextPort     int                            // For network-accessible mode
+	mu               sync.RWMutex
+	endpoints        map[string]socket.EndpointInfo // endpoint ID -> info
+	nextPort         int                            // For network-accessible mode
+	networkPortsByHost map[string]int               // hostname -> network port (persistent)
 }
 
 // New creates a new daemon instance
@@ -61,11 +63,12 @@ func New(configPath string, logger logr.Logger) (*Daemon, error) {
 	}
 	
 	d := &Daemon{
-		config:     cfg,
-		logger:     logger,
-		configPath: configPath,
-		endpoints:  make(map[string]socket.EndpointInfo),
-		nextPort:   cfg.Net.StartPort,
+		config:             cfg,
+		logger:             logger,
+		configPath:         configPath,
+		endpoints:          make(map[string]socket.EndpointInfo),
+		nextPort:           cfg.Net.StartPort,
+		networkPortsByHost: make(map[string]int),
 	}
 	
 	// Check if already registered
@@ -115,6 +118,12 @@ func (d *Daemon) Start() error {
 	ipMappingsPath := d.getIPMappingsPath()
 	if err := d.ipAllocator.LoadPersistentMappings(ipMappingsPath); err != nil {
 		d.logger.Info("Could not load persistent IP mappings", "error", err)
+	}
+	
+	// Load persistent network port mappings
+	networkPortsPath := d.getNetworkPortsPath()
+	if err := d.loadNetworkPortMappings(networkPortsPath); err != nil {
+		d.logger.Info("Could not load persistent network port mappings", "error", err)
 	}
 	
 	// Start unix socket server
@@ -289,6 +298,10 @@ func (d *Daemon) pollAndReconcile() {
 	// Save IP mappings
 	ipMappingsPath := d.getIPMappingsPath()
 	d.ipAllocator.SavePersistentMappings(ipMappingsPath)
+	
+	// Save network port mappings
+	networkPortsPath := d.getNetworkPortsPath()
+	d.saveNetworkPortMappings(networkPortsPath)
 }
 
 // Helper methods to get paths from config
@@ -309,6 +322,11 @@ func (d *Daemon) getOperatorIDPath() string {
 func (d *Daemon) getIPMappingsPath() string {
 	certDir := d.getCertDir()
 	return filepath.Join(certDir, "ip_mappings.json")
+}
+
+func (d *Daemon) getNetworkPortsPath() string {
+	certDir := d.getCertDir()
+	return filepath.Join(certDir, "network_ports.json")
 }
 
 func (d *Daemon) isMacOS() bool {
@@ -440,6 +458,53 @@ func (d *Daemon) rebindEndpoints(endpointIDs []string) {
 	d.pollAndReconcile()
 }
 
+func (d *Daemon) loadNetworkPortMappings(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // File doesn't exist yet
+		}
+		return err
+	}
+	
+	var mappings map[string]int
+	if err := json.Unmarshal(data, &mappings); err != nil {
+		return err
+	}
+	
+	d.networkPortsByHost = mappings
+	
+	// Update nextPort to avoid conflicts
+	maxPort := d.config.Net.StartPort - 1
+	for _, port := range mappings {
+		if port > maxPort {
+			maxPort = port
+		}
+	}
+	d.nextPort = maxPort + 1
+	
+	d.logger.Info("Loaded persistent network port mappings", "count", len(mappings))
+	return nil
+}
+
+func (d *Daemon) saveNetworkPortMappings(path string) error {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	
+	data, err := json.MarshalIndent(d.networkPortsByHost, "", "  ")
+	if err != nil {
+		return err
+	}
+	
+	// Atomic write
+	tempPath := path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0644); err != nil {
+		return err
+	}
+	
+	return os.Rename(tempPath, path)
+}
+
 func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
 	// Parse the IP
 	targetIP := net.ParseIP(ipAddr)
@@ -544,10 +609,20 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		listenAddr = ipStr
 		listenPort = port
 	} else {
-		// Network mode: specific interface, sequential port
+		// Network mode: specific interface, persistent port
 		listenAddr = listenInterface
-		listenPort = d.nextPort
-		d.nextPort++
+		
+		// Check if hostname already has a network port assigned
+		if existingPort, exists := d.networkPortsByHost[hostname]; exists {
+			listenPort = existingPort
+			d.logger.V(1).Info("Reusing network port", "hostname", hostname, "port", existingPort)
+		} else {
+			// Allocate new port
+			listenPort = d.nextPort
+			d.networkPortsByHost[hostname] = listenPort
+			d.nextPort++
+			d.logger.Info("Allocated network port", "hostname", hostname, "port", listenPort)
+		}
 	}
 	
 	// Create listener
