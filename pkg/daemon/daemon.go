@@ -343,10 +343,21 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		}
 	}
 	
+	// Determine listen interface for this endpoint
+	listenInterface := d.config.Net.ListenInterface // Default
+	
+	// Check for per-endpoint override
+	if override, exists := d.config.Net.Overrides[hostname]; exists {
+		listenInterface = override
+		d.logger.Info("Using endpoint override", 
+			"hostname", hostname, 
+			"listen_interface", listenInterface)
+	}
+	
 	// Determine listen address and port based on mode
 	var listenAddr string
 	var listenPort int
-	virtualMode := d.config.Net.ListenInterface == "virtual"
+	virtualMode := listenInterface == "virtual"
 	
 	if virtualMode {
 		// Virtual mode: unique IP, original port
@@ -354,7 +365,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		listenPort = port
 	} else {
 		// Network mode: specific interface, sequential port
-		listenAddr = d.config.Net.ListenInterface
+		listenAddr = listenInterface
 		listenPort = d.nextPort
 		d.nextPort++
 	}
@@ -402,7 +413,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 			"endpoint", ep.URL,
 			"address", fmt.Sprintf("%s:%d", listenAddr, listenPort),
 			"mode", "network",
-			"accessible_from", d.config.Net.ListenInterface)
+			"accessible_from", listenInterface)
 	}
 	
 	// Register with health server
@@ -410,13 +421,14 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	
 	// Track endpoint with listener status
 	d.endpoints[ep.ID] = socket.EndpointInfo{
-		ID:            ep.ID,
-		Hostname:      hostname,
-		IP:            ipStr,
-		Port:          port,
-		URL:           ep.URL,
-		LocalListener: localListenerOK,
-		NetworkPort:   networkPort,
+		ID:              ep.ID,
+		Hostname:        hostname,
+		IP:              ipStr,
+		Port:            port,
+		URL:             ep.URL,
+		LocalListener:   localListenerOK,
+		NetworkPort:     networkPort,
+		ListenInterface: listenInterface,
 	}
 	
 	d.logger.Info("Added bound endpoint",

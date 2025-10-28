@@ -38,10 +38,11 @@ type BoundEndpointsConfig struct {
 
 // NetConfig holds network interface settings
 type NetConfig struct {
-	InterfaceName   string `yaml:"interface_name,omitempty"`
-	Subnet          string `yaml:"subnet,omitempty"`
-	ListenInterface string `yaml:"listen_interface,omitempty"` // "virtual", "0.0.0.0", or specific IP
-	StartPort       int    `yaml:"start_port,omitempty"`       // Starting port for non-virtual modes
+	InterfaceName   string            `yaml:"interface_name,omitempty"`
+	Subnet          string            `yaml:"subnet,omitempty"`
+	ListenInterface string            `yaml:"listen_interface,omitempty"` // Default: "virtual", "0.0.0.0", or specific IP
+	StartPort       int               `yaml:"start_port,omitempty"`       // Starting port for non-virtual modes
+	Overrides       map[string]string `yaml:"overrides,omitempty"`        // hostname -> listen_interface override
 }
 
 // LoadDaemonConfig loads daemon configuration from file
