@@ -3,13 +3,51 @@
 ## Prerequisites
 
 - Linux (Ubuntu 20.04+, RHEL 8+, or similar)
-- Go 1.21+ (for building from source)
 - sudo/root access
 - ngrok API key
 
 ## Installation
 
-### Step 1: Build Binaries
+### Option 1: Automated Install (Recommended)
+
+Use the installation script to automatically download and install ngrokd:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash
+```
+
+This will:
+- Detect your architecture (AMD64/ARM64)
+- Download the appropriate binaries
+- Install to `/usr/local/bin`
+- Create configuration at `/etc/ngrokd/config.yml`
+
+**Then skip to [Step 3: Set API Key](#step-3-set-api-key)**
+
+### Option 2: Manual Install from Pre-built Binaries
+
+```bash
+# Download binaries (AMD64)
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-linux-amd64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokctl-linux-amd64
+
+# Or for ARM64
+# curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-linux-arm64
+# curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokctl-linux-arm64
+
+# Make executable and install
+chmod +x ngrokd-linux-amd64 ngrokctl-linux-amd64
+sudo mv ngrokd-linux-amd64 /usr/local/bin/ngrokd
+sudo mv ngrokctl-linux-amd64 /usr/local/bin/ngrokctl
+
+# Verify
+ngrokd --version
+ngrokctl help
+```
+
+### Option 3: Build from Source
+
+Requires Go 1.21+:
 
 ```bash
 # Clone repository
@@ -23,15 +61,15 @@ go build -o ngrokctl ./cmd/ngrokctl
 # Install to /usr/local/bin
 sudo mv ngrokd /usr/local/bin/
 sudo mv ngrokctl /usr/local/bin/
-sudo chmod +x /usr/local/bin/ngrokd
-sudo chmod +x /usr/local/bin/ngrokctl
 
 # Verify
 ngrokd --version
 ngrokctl help
 ```
 
-### Step 2: Create Configuration
+### Step 2: Create Configuration (if not using automated install)
+
+If you used the automated install script, this is already done. Otherwise:
 
 ```bash
 # Create config directory
@@ -63,19 +101,7 @@ net:
 EOF
 ```
 
-### Step 3: Start Daemon
-
-```bash
-# Start in foreground (for testing)
-sudo ngrokd --config=/etc/ngrokd/config.yml
-
-# Or run in background
-sudo ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
-```
-
-### Step 4: Set API Key
-
-In another terminal:
+### Step 3: Set API Key
 
 ```bash
 # Fix socket permissions (one-time)
