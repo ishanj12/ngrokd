@@ -389,7 +389,15 @@ func (d *Daemon) reloadConfig() {
 	// Load new config
 	newCfg, err := config.LoadDaemonConfig(d.configPath)
 	if err != nil {
-		d.logger.Error(err, "Failed to reload config")
+		d.logger.Error(err, "❌ Invalid config - reload failed", "path", d.configPath)
+		d.logger.Info("⚠️  Keeping current configuration")
+		return
+	}
+	
+	// Validate config
+	if err := d.validateConfig(newCfg); err != nil {
+		d.logger.Error(err, "❌ Config validation failed - reload aborted")
+		d.logger.Info("⚠️  Fix errors and save again")
 		return
 	}
 	
@@ -448,7 +456,43 @@ func (d *Daemon) reloadConfig() {
 		}
 	}
 	
-	d.logger.Info("Config reloaded successfully")
+	d.logger.Info("✅ Config reloaded successfully")
+}
+
+func (d *Daemon) validateConfig(cfg *config.DaemonConfig) error {
+	// Validate poll interval
+	if cfg.BoundEndpoints.PollInterval <= 0 {
+		return fmt.Errorf("poll_interval must be > 0")
+	}
+	
+	if cfg.BoundEndpoints.PollInterval < 5 {
+		d.logger.Info("⚠️  Warning: poll_interval < 5s may hit API rate limits")
+	}
+	
+	// Validate listen_interface
+	validModes := map[string]bool{"virtual": true, "0.0.0.0": true}
+	if !validModes[cfg.Net.ListenInterface] {
+		// Check if it's a valid IP
+		if net.ParseIP(cfg.Net.ListenInterface) == nil {
+			return fmt.Errorf("listen_interface must be 'virtual', '0.0.0.0', or a valid IP address")
+		}
+	}
+	
+	// Validate overrides
+	for hostname, listenInterface := range cfg.Net.Overrides {
+		if listenInterface != "virtual" && listenInterface != "0.0.0.0" {
+			if net.ParseIP(listenInterface) == nil {
+				return fmt.Errorf("invalid override for '%s': '%s' is not a valid IP or mode", hostname, listenInterface)
+			}
+		}
+	}
+	
+	// Validate start_port
+	if cfg.Net.StartPort < 1 || cfg.Net.StartPort > 65535 {
+		return fmt.Errorf("start_port must be between 1 and 65535")
+	}
+	
+	return nil
 }
 
 func (d *Daemon) getListenInterfaceForHostname(hostname string, overrides map[string]string, defaultInterface string) string {
