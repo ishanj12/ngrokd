@@ -317,6 +317,47 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
+	// Parse the IP
+	targetIP := net.ParseIP(ipAddr)
+	if targetIP == nil {
+		return false
+	}
+	
+	// Get all network interfaces
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		d.logger.V(1).Info("Failed to get network interfaces", "error", err)
+		return false
+	}
+	
+	// Check each interface for the IP
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		
+		for _, addr := range addrs {
+			// Parse the address
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			
+			// Compare IPs
+			if ip != nil && ip.Equal(targetIP) {
+				return true
+			}
+		}
+	}
+	
+	return false
+}
+
 func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	// Parse hostname and port from URL
 	hostname, port, err := ipalloc.ParseHostname(ep.URL)
@@ -355,6 +396,19 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		d.logger.Info("Using endpoint override", 
 			"hostname", hostname, 
 			"listen_interface", listenInterface)
+	}
+	
+	// Validate listen interface
+	if listenInterface != "virtual" && listenInterface != "0.0.0.0" {
+		// Check if specific IP exists on machine
+		if !d.ipExistsOnMachine(listenInterface) {
+			d.logger.Error(nil, "❌ Invalid listen_interface - IP does not exist on this machine",
+				"endpoint", ep.URL,
+				"hostname", hostname,
+				"listen_interface", listenInterface,
+				"suggestion", "Use '0.0.0.0' or run 'ifconfig' to see available IPs")
+			return
+		}
 	}
 	
 	// Determine listen address and port based on mode
