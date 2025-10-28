@@ -104,11 +104,17 @@ EOF
 ### Step 3: Set API Key
 
 ```bash
-# Fix socket permissions (one-time)
-sudo chmod 666 /var/run/ngrokd.sock
-
-# Set your API key
 ngrokctl set-api-key YOUR_NGROK_API_KEY
+```
+
+### Step 4: Start Daemon
+
+```bash
+# Start in background (recommended)
+sudo nohup ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
+
+# Or start in foreground (for debugging)
+sudo ngrokd --config=/etc/ngrokd/config.yml
 ```
 
 ### Step 5: Verify
