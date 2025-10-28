@@ -452,7 +452,9 @@ func (d *Daemon) getListenInterfaceForHostname(hostname string, overrides map[st
 
 func (d *Daemon) rebindEndpoints(endpointIDs []string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
+	
+	// Collect endpoint info before stopping
+	endpointsToRecreate := []ngrokapi.Endpoint{}
 	
 	for _, id := range endpointIDs {
 		ep, exists := d.endpoints[id]
@@ -464,18 +466,23 @@ func (d *Daemon) rebindEndpoints(endpointIDs []string) {
 		d.listenerMgr.StopListener(id)
 		d.logger.Info("Stopped listener for rebinding", "endpoint", ep.URL)
 		
-		// Remove from tracking temporarily
+		// Remove from tracking
 		delete(d.endpoints, id)
 		
-		// Trigger immediate poll to recreate with new config
-		// The poll will discover the same endpoint and create with new settings
+		// Store endpoint info for recreation
+		endpointsToRecreate = append(endpointsToRecreate, ngrokapi.Endpoint{
+			ID:  ep.ID,
+			URL: ep.URL,
+		})
 	}
 	
-	// Unlock before poll (it needs lock)
 	d.mu.Unlock()
-	d.logger.Info("Triggering poll to recreate listeners with new config")
-	d.pollAndReconcile()
-	d.mu.Lock()
+	
+	// Recreate listeners immediately with new config
+	for _, ep := range endpointsToRecreate {
+		d.logger.Info("Recreating listener with new config", "endpoint", ep.URL)
+		d.addEndpoint(ep)
+	}
 }
 
 func (d *Daemon) loadNetworkPortMappings(path string) error {
