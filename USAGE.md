@@ -60,7 +60,7 @@ Each endpoint gets unique IP on original port:
 **Config:**
 ```yaml
 net:
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 **Result:**
@@ -79,12 +79,12 @@ curl http://database.ngrok.app/
 
 ### Network Accessible
 
-Dual listeners - unique IP + network port:
+Network accessible mode with sequential ports:
 
 **Config:**
 ```yaml
 net:
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 
@@ -120,7 +120,7 @@ curl http://daemon-server:9081/  # web.ngrok.app
 **Setup:**
 ```yaml
 net:
-  network_accessible: false  # Local only
+  listen_interface: virtual  # Local only
 ```
 
 **Usage:**
@@ -140,7 +140,7 @@ psql -h $DB_HOST -p $DB_PORT
 **Setup on daemon machine:**
 ```yaml
 net:
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 
@@ -163,7 +163,7 @@ npm test
 **Setup:**
 ```yaml
 net:
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 
@@ -463,12 +463,12 @@ done
 
 ### 4. Network Mode for Teams
 
-Enable `network_accessible: true` when:
+Set `listen_interface: "0.0.0.0"` when:
 - Multiple developers need access
 - CI/CD runners are separate machines
 - Docker containers need access
 
-Keep disabled for:
+Use `listen_interface: virtual` for:
 - Single developer workflows
 - Security-sensitive environments
 - No need for remote access

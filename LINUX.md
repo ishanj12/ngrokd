@@ -58,7 +58,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
   start_port: 9080
 EOF
 ```
@@ -215,7 +215,7 @@ To allow other machines to access endpoints:
 
 ```yaml
 net:
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 

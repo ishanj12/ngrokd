@@ -41,7 +41,7 @@ curl http://database.identifier/ # → 127.0.0.4:80
 ### Network Accessibility (Optional)
 ```bash
 # Enable in config for remote machine access
-network_accessible: true
+listen_interface: "0.0.0.0"
 
 # Then from any machine on your network:
 curl http://daemon-machine:9080/  # Endpoint 1
@@ -105,7 +105,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
   start_port: 9080
 EOF
 ```
@@ -208,13 +208,14 @@ net:
 
 ```yaml
 net:
-  network_accessible: true  # Enable network access
-  start_port: 9080          # Start port for network listeners
+  listen_interface: "0.0.0.0"  # Enable network access
+  start_port: 9080             # Start port for network listeners
 ```
 
-Creates dual listeners:
-- Local: Unique IP, original port
-- Network: 0.0.0.0, sequential ports
+Options for `listen_interface`:
+- `virtual` - Unique IP per endpoint (default, localhost only)
+- `"0.0.0.0"` - Network accessible with sequential ports
+- Specific IP - Custom bind address (e.g., `"192.168.1.100"`)
 
 ## Requirements
 

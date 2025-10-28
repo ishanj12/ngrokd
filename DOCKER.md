@@ -84,7 +84,7 @@ bound_endpoints:
 
 net:
   subnet: 10.107.0.0/16
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 EOF
 
@@ -363,7 +363,7 @@ docker run --cap-add=NET_ADMIN ...
 **Workaround:** Use network mode instead:
 ```yaml
 net:
-  network_accessible: true
+  listen_interface: "0.0.0.0"
 ```
 
 Apps use `ngrokd:9080` instead of hostnames.

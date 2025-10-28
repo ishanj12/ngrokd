@@ -26,7 +26,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
   start_port: 9080
 ```
 
@@ -120,7 +120,7 @@ Network interface and IP allocation configuration.
 |-------|------|----------|---------|-------------|
 | `interface_name` | string | No | `ngrokd0` | Virtual interface name (Linux only) |
 | `subnet` | string | No | `10.107.0.0/16` | IP subnet for allocation |
-| `network_accessible` | bool | No | `false` | Enable network access mode |
+| `listen_interface` | string | No | `virtual` | Listen mode: `virtual`, `"0.0.0.0"`, or specific IP |
 | `start_port` | int | No | `9080` | Starting port for network listeners |
 
 **Example - Local Only:**
@@ -128,7 +128,7 @@ Network interface and IP allocation configuration.
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 **Example - Network Accessible:**
@@ -136,7 +136,7 @@ net:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 
@@ -145,9 +145,10 @@ net:
 - **macOS:** Auto-uses 127.0.0.0/8 (ignores configured subnet)
 - `interface_name` only affects Linux (macOS uses lo0)
 
-**Network Mode:**
-- `false` - Listeners on unique IPs only (localhost)
-- `true` - Dual listeners (unique IP + 0.0.0.0:port for network)
+**Listen Interface Options:**
+- `virtual` - Listeners on unique IPs only (localhost)
+- `"0.0.0.0"` - Network accessible with sequential ports
+- Specific IP - Bind to custom address (e.g., `"192.168.1.100"`)
 
 ## Complete Examples
 
@@ -191,7 +192,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 ### Production - Network Accessible
@@ -217,7 +218,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: true
+  listen_interface: "0.0.0.0"
   start_port: 9080
 ```
 
@@ -237,7 +238,7 @@ bound_endpoints:
 
 net:
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 ### Fast Discovery
@@ -310,7 +311,7 @@ bound_endpoints:
 
 net:
   subnet: 10.107.0.0/16  # Auto-uses 127.0.0.0/8 on macOS
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 **Note:** Subnet is automatically changed to 127.0.0.0/8 on macOS.
@@ -332,7 +333,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16  # Creates dummy interface
-  network_accessible: false
+  listen_interface: virtual
 ```
 
 **Note:** Uses configured subnet exactly as specified.

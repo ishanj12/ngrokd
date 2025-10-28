@@ -158,7 +158,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  network_accessible: false
+  listen_interface: virtual
   start_port: 9080
 EOF
     echo -e "${GREEN}✓ Created default config${NC}"
