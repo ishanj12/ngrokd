@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /build
 
@@ -37,6 +37,10 @@ COPY --from=builder /build/ngrokctl /usr/local/bin/ngrokctl
 # Set permissions
 RUN chmod +x /usr/local/bin/ngrokd /usr/local/bin/ngrokctl
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Create default config
 COPY config.daemon.yaml /etc/ngrokd/config.yml.example
 
@@ -53,5 +57,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # Run as root (required for network interface creation)
 USER root
 
-ENTRYPOINT ["/usr/local/bin/ngrokd"]
-CMD ["--config=/etc/ngrokd/config.yml"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/ngrokd", "--config=/etc/ngrokd/config.yml"]
