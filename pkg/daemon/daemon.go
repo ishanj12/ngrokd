@@ -665,7 +665,27 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 			"listen_interface", listenInterface)
 	}
 	
-	// Validate listen interface
+	// Resolve interface name to IP if needed
+	resolvedIP, err := d.resolveInterfaceToIP(listenInterface)
+	if err != nil {
+		d.logger.Error(err, "❌ Failed to resolve listen_interface",
+			"endpoint", ep.URL,
+			"hostname", hostname,
+			"listen_interface", listenInterface,
+			"available_interfaces", d.listAvailableInterfaces())
+		return
+	}
+	
+	// Update listen interface with resolved IP
+	if resolvedIP != listenInterface {
+		d.logger.Info("Resolved interface name to IP",
+			"interface", listenInterface,
+			"ip", resolvedIP,
+			"hostname", hostname)
+		listenInterface = resolvedIP
+	}
+	
+	// Validate resolved interface
 	if listenInterface != "virtual" && listenInterface != "0.0.0.0" {
 		// Check if specific IP exists on machine
 		if !d.ipExistsOnMachine(listenInterface) {
@@ -673,7 +693,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 				"endpoint", ep.URL,
 				"hostname", hostname,
 				"listen_interface", listenInterface,
-				"suggestion", "Use '0.0.0.0' or run 'ifconfig' to see available IPs")
+				"available_interfaces", d.listAvailableInterfaces())
 			return
 		}
 	}
