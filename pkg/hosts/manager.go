@@ -140,8 +140,24 @@ func (m *Manager) writeHostsAtomic(lines []string) error {
 		return err
 	}
 	
-	// Atomic rename
-	return os.Rename(tempPath, m.hostsPath)
+	// Try atomic rename first (works on native systems)
+	if err := os.Rename(tempPath, m.hostsPath); err != nil {
+		// If rename fails (e.g., in Docker), copy content instead
+		content, readErr := os.ReadFile(tempPath)
+		if readErr != nil {
+			os.Remove(tempPath)
+			return fmt.Errorf("rename failed and couldn't read temp file: %w", err)
+		}
+		
+		if writeErr := os.WriteFile(m.hostsPath, content, 0644); writeErr != nil {
+			os.Remove(tempPath)
+			return fmt.Errorf("rename failed and couldn't write hosts file: %w", err)
+		}
+		
+		os.Remove(tempPath)
+	}
+	
+	return nil
 }
 
 // GetCurrentMappings returns current ngrokd mappings from /etc/hosts
