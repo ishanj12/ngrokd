@@ -23,7 +23,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  listen_interface: "0.0.0.0"
+  listen_interface: "0.0.0.0"  # Default for Docker (use port mappings)
   start_port: 9080
 EOF
 fi
