@@ -301,6 +301,38 @@ func cmdConfigEdit() {
 		os.Exit(1)
 	}
 	
+	// Check if running in Docker (/.dockerenv exists)
+	inDocker := false
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		inDocker = true
+	}
+	
+	// In Docker, vi doesn't work well with docker exec -it
+	// Show instructions instead
+	if inDocker {
+		fmt.Println("╔═══════════════════════════════════════════════════════╗")
+		fmt.Println("║           Edit Config (Docker Container)              ║")
+		fmt.Println("╚═══════════════════════════════════════════════════════╝")
+		fmt.Println()
+		fmt.Println("From your host machine, run:")
+		fmt.Println()
+		fmt.Println("  # Copy config to host")
+		fmt.Println("  docker cp ngrokd:/etc/ngrokd/config.yml ./config.yml")
+		fmt.Println()
+		fmt.Println("  # Edit with your favorite editor")
+		fmt.Println("  vim config.yml")
+		fmt.Println()
+		fmt.Println("  # Copy back to container")
+		fmt.Println("  docker cp ./config.yml ngrokd:/etc/ngrokd/config.yml")
+		fmt.Println()
+		fmt.Println("Config will auto-reload in ~5 seconds.")
+		fmt.Println()
+		fmt.Println("Or use sed for quick changes:")
+		fmt.Println("  docker exec ngrokd sed -i 's/old/new/' /etc/ngrokd/config.yml")
+		fmt.Println()
+		return
+	}
+	
 	// Get editor from environment or use default
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
