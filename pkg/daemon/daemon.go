@@ -473,9 +473,12 @@ func (d *Daemon) validateConfig(cfg *config.DaemonConfig) error {
 	// Validate listen_interface
 	validModes := map[string]bool{"virtual": true, "0.0.0.0": true}
 	if !validModes[cfg.Net.ListenInterface] {
-		// Check if it's a valid IP
+		// Check if it's a valid IP or interface name
 		if net.ParseIP(cfg.Net.ListenInterface) == nil {
-			return fmt.Errorf("listen_interface must be 'virtual', '0.0.0.0', or a valid IP address")
+			// Try to resolve as interface name
+			if _, err := net.InterfaceByName(cfg.Net.ListenInterface); err != nil {
+				return fmt.Errorf("listen_interface must be 'virtual', '0.0.0.0', a valid IP address, or a valid interface name (e.g., 'eth0', 'en0')")
+			}
 		}
 	}
 	
@@ -483,7 +486,10 @@ func (d *Daemon) validateConfig(cfg *config.DaemonConfig) error {
 	for hostname, listenInterface := range cfg.Net.Overrides {
 		if listenInterface != "virtual" && listenInterface != "0.0.0.0" {
 			if net.ParseIP(listenInterface) == nil {
-				return fmt.Errorf("invalid override for '%s': '%s' is not a valid IP or mode", hostname, listenInterface)
+				// Try to resolve as interface name
+				if _, err := net.InterfaceByName(listenInterface); err != nil {
+					return fmt.Errorf("invalid override for '%s': '%s' is not a valid IP, mode, or interface name", hostname, listenInterface)
+				}
 			}
 		}
 	}
