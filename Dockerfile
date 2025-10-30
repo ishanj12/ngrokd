@@ -25,7 +25,8 @@ RUN apk add --no-cache \
     ca-certificates \
     curl \
     iproute2 \
-    iptables
+    iptables \
+    nano
 
 # Create config directory
 RUN mkdir -p /etc/ngrokd

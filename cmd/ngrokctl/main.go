@@ -307,29 +307,26 @@ func cmdConfigEdit() {
 		inDocker = true
 	}
 	
-	// In Docker, vi doesn't work well with docker exec -it
-	// Show instructions instead
+	// In Docker, use nano which works with docker exec -it
 	if inDocker {
-		fmt.Println("╔═══════════════════════════════════════════════════════╗")
-		fmt.Println("║           Edit Config (Docker Container)              ║")
-		fmt.Println("╚═══════════════════════════════════════════════════════╝")
+		fmt.Println("Opening config with nano...")
+		fmt.Println("Press Ctrl+X to exit, Y to save, Enter to confirm")
 		fmt.Println()
-		fmt.Println("From your host machine, run:")
-		fmt.Println()
-		fmt.Println("  # Copy config to host")
-		fmt.Println("  docker cp ngrokd:/etc/ngrokd/config.yml ./config.yml")
-		fmt.Println()
-		fmt.Println("  # Edit with your favorite editor")
-		fmt.Println("  vim config.yml")
-		fmt.Println()
-		fmt.Println("  # Copy back to container")
-		fmt.Println("  docker cp ./config.yml ngrokd:/etc/ngrokd/config.yml")
-		fmt.Println()
-		fmt.Println("Config will auto-reload in ~5 seconds.")
-		fmt.Println()
-		fmt.Println("Or use sed for quick changes:")
-		fmt.Println("  docker exec ngrokd sed -i 's/old/new/' /etc/ngrokd/config.yml")
-		fmt.Println()
+		
+		cmd := exec.Command("nano", configPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("Error opening config: %v\n", err)
+			fmt.Println()
+			fmt.Println("Alternative: From host machine, run:")
+			fmt.Println("  docker cp ngrokd:/etc/ngrokd/config.yml ./config.yml")
+			fmt.Println("  vim config.yml")
+			fmt.Println("  docker cp ./config.yml ngrokd:/etc/ngrokd/config.yml")
+			os.Exit(1)
+		}
 		return
 	}
 	
