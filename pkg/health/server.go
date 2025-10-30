@@ -129,9 +129,7 @@ func (s *Server) UnregisterEndpoint(name string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if ep, exists := s.endpoints[name]; exists {
-		ep.Active = false
-	}
+	delete(s.endpoints, name)
 }
 
 // RecordConnection records a new connection for an endpoint
@@ -171,11 +169,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Agent is healthy if at least one endpoint is active
-	healthy := len(s.endpoints) > 0
+	// Agent is healthy if at least one active endpoint exists
+	healthy := false
 	for _, ep := range s.endpoints {
-		if !ep.Active {
-			healthy = false
+		if ep.Active {
+			healthy = true
 			break
 		}
 	}
