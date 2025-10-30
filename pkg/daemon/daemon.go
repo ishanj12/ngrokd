@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -711,20 +712,23 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		// Network mode: specific interface, persistent port
 		listenAddr = listenInterface
 		
-		// Check if hostname already has a network port assigned
-		if existingPort, exists := d.networkPortsByHost[hostname]; exists {
+		// Use hostname:port as key to support same hostname with different ports
+		endpointKey := fmt.Sprintf("%s:%d", hostname, port)
+		
+		// Check if this endpoint already has a network port assigned
+		if existingPort, exists := d.networkPortsByHost[endpointKey]; exists {
 			listenPort = existingPort
-			d.logger.V(1).Info("Reusing network port", "hostname", hostname, "port", existingPort)
+			d.logger.V(1).Info("Reusing network port", "endpoint_key", endpointKey, "port", existingPort)
 		} else {
 			// Allocate new port
 			listenPort = d.nextPort
-			d.networkPortsByHost[hostname] = listenPort
+			d.networkPortsByHost[endpointKey] = listenPort
 			d.nextPort++
-			d.logger.Info("Allocated network port", "hostname", hostname, "port", listenPort)
+			d.logger.Info("Allocated network port", "endpoint_key", endpointKey, "port", listenPort)
 		}
 	}
 	
-	// Create listener
+	// Create listener with retry on port conflict
 	endpoint := forwarder.BoundEndpoint{
 		Name:         ep.ID,
 		URI:          ep.URL,
@@ -736,12 +740,39 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	ctx := context.Background()
 	localListenerOK := true
 	networkPort := 0
+	maxRetries := 20
 	
-	if err := d.listenerMgr.StartListener(ctx, endpoint); err != nil {
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := d.listenerMgr.StartListener(ctx, endpoint)
+		if err == nil {
+			// Success!
+			break
+		}
+		
+		// Check if it's a port conflict
+		if !virtualMode && (strings.Contains(err.Error(), "address already in use") || strings.Contains(err.Error(), "bind: address already in use")) {
+			// Try next port
+			d.logger.Info("Port in use, trying next port",
+				"endpoint", ep.URL,
+				"conflicted_port", listenPort,
+				"next_port", d.nextPort)
+			
+			listenPort = d.nextPort
+			d.nextPort++
+			endpoint.LocalPort = listenPort
+			
+			// Update the mapping with the new port
+			endpointKey := fmt.Sprintf("%s:%d", hostname, port)
+			d.networkPortsByHost[endpointKey] = listenPort
+			continue
+		}
+		
+		// Other error or max retries
 		d.logger.Error(err, "⚠️  Failed to start listener", 
 			"endpoint", ep.URL, 
 			"port", listenPort,
-			"address", listenAddr)
+			"address", listenAddr,
+			"attempt", attempt+1)
 		
 		localListenerOK = false
 		
