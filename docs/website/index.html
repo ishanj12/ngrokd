@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ngrokd - Forward Proxy Daemon for Kubernetes Bound Endpoints</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header>
+    <nav class="container">
+      <a href="#introduction" class="logo">ngrokd</a>
+      <ul class="nav-links">
+        <li><a href="#introduction">Home</a></li>
+        <li><a href="#prerequisites">Prerequisites</a></li>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#configuration">Configuration</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Introduction -->
+    <section id="introduction" class="hero container">
+      <h1>ngrokd</h1>
+      <p class="tagline">Forward Proxy Daemon for Kubernetes Bound Endpoints</p>
+      <p>A standalone daemon that enables local and network applications to connect to Kubernetes bound endpoints in ngrok's cloud via mTLS, without requiring a Kubernetes cluster.</p>
+      <div style="margin-top: 2rem;">
+        <a href="#installation" class="btn">Get Started</a>
+        <a href="https://github.com/ishanj12/ngrokd" class="btn btn-secondary" style="margin-left: 1rem;">View on GitHub</a>
+      </div>
+    </section>
+
+    <section class="container section">
+      <h2>What is ngrokd?</h2>
+      <p>ngrokd is a background daemon that:</p>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🔍</div>
+          <h3>Auto-Discovery</h3>
+          <p>Automatically discovers Kubernetes bound endpoints from ngrok API and reconciles dynamically every 30 seconds.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🌐</div>
+          <h3>Virtual Network Interfaces</h3>
+          <p>Creates unique IPs per endpoint with automatic IP allocation and persistence across restarts.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📝</div>
+          <h3>Automatic DNS</h3>
+          <p>Manages /etc/hosts automatically - no manual DNS configuration needed.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔐</div>
+          <h3>Secure mTLS</h3>
+          <p>Forwards traffic securely via mTLS to ngrok cloud with automatic certificate provisioning.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔄</div>
+          <h3>Dynamic Reconciliation</h3>
+          <p>Endpoints added or removed on-the-fly with automatic listener lifecycle management.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💾</div>
+          <h3>State Persistence</h3>
+          <p>Same hostname gets same IP/port across daemon restarts for consistency.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Prerequisites -->
+    <section id="prerequisites" class="container section">
+      <h2>Prerequisites</h2>
+      <p>Before installing ngrokd, you'll need:</p>
+
+      <div class="card">
+        <h3>1. Create an ngrok API Key</h3>
+        <p>The API key allows ngrokd to discover your bound endpoints and provision certificates.</p>
+        
+        <p><strong>Steps:</strong></p>
+        <ol>
+          <li>Go to <a href="https://dashboard.ngrok.com/api" target="_blank">https://dashboard.ngrok.com/api</a></li>
+          <li>Click "New API Key"</li>
+          <li>Give it a description (e.g., "ngrokd daemon")</li>
+          <li>Copy the API key (you'll use it with <code>ngrokctl set-api-key</code>)</li>
+        </ol>
+
+        <p style="margin-top: 1rem;"><strong>Note:</strong> Keep this key secure! It has access to your ngrok account.</p>
+      </div>
+
+      <div class="card">
+        <h3>2. Create Kubernetes Bound Cloud Endpoints</h3>
+        <p>Bound endpoints connect your Kubernetes services to ngrok's cloud. ngrokd automatically discovers these.</p>
+        
+        <p><strong>Option A: Using ngrok Dashboard</strong></p>
+        <ol>
+          <li>Go to <a href="https://dashboard.ngrok.com/cloud-edge/endpoints" target="_blank">https://dashboard.ngrok.com/cloud-edge/endpoints</a></li>
+          <li>Click "New Endpoint" → "Cloud"</li>
+          <li>Choose "Kubernetes Binding" as the upstream type</li>
+          <li>Configure:
+            <ul>
+              <li><strong>URL:</strong> Format as <code>identifier.subdomain</code> (e.g., <code>api.myapp</code>)</li>
+              <li><strong>Traffic Policy:</strong> Configure routing rules, authentication, or custom responses</li>
+            </ul>
+          </li>
+          <li>Click "Create Endpoint"</li>
+        </ol>
+
+        <p style="margin-top: 1.5rem;"><strong>Verify endpoints exist:</strong></p>
+        <pre><code># List your bound endpoints
+curl -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Ngrok-Version: 2" \
+  https://api.ngrok.com/endpoints</code></pre>
+      </div>
+    </section>
+
+    <section class="container section">
+      <h2>Platform Support</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Platform</th>
+            <th>IP Range</th>
+            <th>Interface</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Linux</td>
+            <td>10.107.0.0/16</td>
+            <td>dummy (ngrokd0)</td>
+          </tr>
+          <tr>
+            <td>macOS</td>
+            <td>127.0.0.0/8</td>
+            <td>lo0 aliases</td>
+          </tr>
+          <tr>
+            <td>Docker</td>
+            <td>Configurable</td>
+            <td>virtual/0.0.0.0</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top: 1rem;"><em>Windows support is planned for a future release.</em></p>
+    </section>
+
+    <!-- Installation -->
+    <section id="installation" class="container section">
+      <h2>Installation</h2>
+      
+      <div class="tabs">
+        <button class="tab" onclick="switchTab('install-macos')">macOS</button>
+        <button class="tab" onclick="switchTab('install-linux')">Linux</button>
+        <button class="tab" onclick="switchTab('install-docker')">Docker</button>
+      </div>
+
+      <div id="install-macos" class="tab-content">
+        <h3>Quick Install (Recommended)</h3>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash</code></pre>
+        
+        <h3>Download Pre-built Binaries</h3>
+        <pre><code># Apple Silicon
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-darwin-arm64.tar.gz
+tar xzf ngrokd-v0.2.0-darwin-arm64.tar.gz
+cd ngrokd-v0.2.0-darwin-arm64
+sudo ./install.sh
+
+# Intel Mac
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-darwin-amd64.tar.gz
+tar xzf ngrokd-v0.2.0-darwin-amd64.tar.gz
+cd ngrokd-v0.2.0-darwin-amd64
+sudo ./install.sh</code></pre>
+
+        <h3>Start Daemon</h3>
+        <pre><code># Background mode (recommended)
+sudo nohup ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
+
+# Foreground mode (for debugging)
+sudo ngrokd --config=/etc/ngrokd/config.yml</code></pre>
+
+        <h3>Set API Key</h3>
+        <pre><code>ngrokctl set-api-key YOUR_NGROK_API_KEY</code></pre>
+
+        <h3>Verify</h3>
+        <pre><code>ngrokctl status
+ngrokctl list
+curl http://your-endpoint/</code></pre>
+      </div>
+
+      <div id="install-linux" class="tab-content">
+        <h3>Quick Install (Recommended)</h3>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash</code></pre>
+        
+        <h3>Download Pre-built Binaries</h3>
+        <pre><code># AMD64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-linux-amd64.tar.gz
+tar xzf ngrokd-v0.2.0-linux-amd64.tar.gz
+cd ngrokd-v0.2.0-linux-amd64
+sudo ./install.sh
+
+# ARM64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-linux-arm64.tar.gz
+tar xzf ngrokd-v0.2.0-linux-arm64.tar.gz
+cd ngrokd-v0.2.0-linux-arm64
+sudo ./install.sh</code></pre>
+
+        <h3>Start Daemon</h3>
+        <pre><code># Background mode (recommended)
+sudo nohup ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
+
+# Or use systemd
+sudo tee /etc/systemd/system/ngrokd.service << 'EOF'
+[Unit]
+Description=ngrokd Forward Proxy Daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ngrokd --config=/etc/ngrokd/config.yml
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable ngrokd
+sudo systemctl start ngrokd</code></pre>
+
+        <h3>Set API Key</h3>
+        <pre><code>ngrokctl set-api-key YOUR_NGROK_API_KEY</code></pre>
+
+        <h3>Verify</h3>
+        <pre><code>ngrokctl status
+ngrokctl list
+curl http://your-endpoint/</code></pre>
+      </div>
+
+      <div id="install-docker" class="tab-content">
+        <h3>Pull Image</h3>
+        <pre><code>docker pull ishanjain8108/ngrokd:latest</code></pre>
+
+        <h3>Run Container</h3>
+        <pre><code>docker run -d \
+  --name ngrokd \
+  --cap-add=NET_ADMIN \
+  -e NGROK_API_KEY=your_api_key \
+  -p 9080-9100:9080-9100 \
+  -v ngrokd-data:/etc/ngrokd \
+  ishanjain8108/ngrokd:latest</code></pre>
+
+        <h3>Verify</h3>
+        <pre><code># Check status
+docker exec ngrokd ngrokctl status
+
+# List endpoints (wait ~30s first)
+docker exec ngrokd ngrokctl list
+
+# Test endpoint
+curl http://localhost:9080/</code></pre>
+
+        <h3>Using Docker Compose</h3>
+        <pre><code>services:
+  ngrokd:
+    image: ishanjain8108/ngrokd:latest
+    container_name: ngrokd
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NGROK_API_KEY=${NGROK_API_KEY}
+    ports:
+      - "9080-9100:9080-9100"
+    volumes:
+      - ngrokd-data:/etc/ngrokd
+    restart: unless-stopped
+
+volumes:
+  ngrokd-data:</code></pre>
+
+        <p style="margin-top: 1rem;">Start with:</p>
+        <pre><code>NGROK_API_KEY=your_key docker-compose up -d</code></pre>
+
+        <h3>Edit Config in Container</h3>
+        <pre><code>docker exec -it ngrokd ngrokctl config edit</code></pre>
+      </div>
+    </section>
+
+    <!-- Configuration -->
+    <section id="configuration" class="container section">
+      <h2>Configuration</h2>
+      
+      <h3>Listen Interface Modes</h3>
+      <div class="card">
+        <h4>Virtual Mode (Default)</h4>
+        <p>Each endpoint gets a unique IP address. Best for same-machine access.</p>
+        <pre><code>net:
+  listen_interface: "virtual"</code></pre>
+        <p><strong>Example:</strong></p>
+        <ul>
+          <li>Endpoint 1: 127.0.0.2:80 (macOS) or 10.107.0.2:80 (Linux)</li>
+          <li>Endpoint 2: 127.0.0.3:80</li>
+          <li>Endpoint 3: 127.0.0.4:80</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>Network Mode - All Interfaces</h4>
+        <p>Binds to 0.0.0.0 with sequential ports. Best for network accessibility.</p>
+        <pre><code>net:
+  listen_interface: "0.0.0.0"
+  start_port: 9080</code></pre>
+        <p><strong>Example:</strong></p>
+        <ul>
+          <li>Endpoint 1: 0.0.0.0:9080</li>
+          <li>Endpoint 2: 0.0.0.0:9081</li>
+          <li>Endpoint 3: 0.0.0.0:9082</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>Network Mode - Named Interface</h4>
+        <p>Bind to a specific network interface. Great for multi-homed servers.</p>
+        <pre><code>net:
+  listen_interface: "eth0"    # or "en0", "enp0s1", etc.
+  start_port: 9080</code></pre>
+        <p><strong>Example:</strong></p>
+        <ul>
+          <li>Automatically resolves eth0 to its IP (e.g., 192.168.1.100)</li>
+          <li>Endpoints bind to 192.168.1.100:9080, 9081, 9082...</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>Network Mode - Specific IP</h4>
+        <p>Bind to a specific IP address.</p>
+        <pre><code>net:
+  listen_interface: "192.168.1.100"
+  start_port: 9080</code></pre>
+      </div>
+
+      <h3>Per-Endpoint Overrides</h3>
+      <p>Customize listen interface for specific endpoints:</p>
+      <pre><code>net:
+  listen_interface: "virtual"    # Default
+  start_port: 9080
+  overrides:
+    my-endpoint: "0.0.0.0"       # This endpoint uses network mode
+    other-endpoint: "eth0"        # This one uses eth0</code></pre>
+    </section>
+
+    <!-- Config File -->
+    <section id="config-file" class="container section">
+      <h2>Configuration File</h2>
+      
+      <p>Default location: <code>/etc/ngrokd/config.yml</code></p>
+
+      <h3>Complete Configuration Example</h3>
+      <pre><code>api:
+  url: https://api.ngrok.com
+  key: ""  # Set via: ngrokctl set-api-key
+
+ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
+
+server:
+  log_level: info
+  socket_path: /var/run/ngrokd.sock
+  client_cert: /etc/ngrokd/tls.crt
+  client_key: /etc/ngrokd/tls.key
+
+bound_endpoints:
+  poll_interval: 30    # Seconds between API polls
+
+net:
+  interface_name: ngrokd0
+  subnet: 10.107.0.0/16
+  listen_interface: "virtual"
+  start_port: 9080
+  overrides: {}        # Per-endpoint overrides</code></pre>
+
+      <h3>Configuration Options</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Description</th>
+            <th>Default</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>api.url</code></td>
+            <td>ngrok API URL</td>
+            <td>https://api.ngrok.com</td>
+          </tr>
+          <tr>
+            <td><code>api.key</code></td>
+            <td>ngrok API key (set via ngrokctl)</td>
+            <td>""</td>
+          </tr>
+          <tr>
+            <td><code>ingressEndpoint</code></td>
+            <td>mTLS ingress endpoint</td>
+            <td>kubernetes-binding-ingress.ngrok.io:443</td>
+          </tr>
+          <tr>
+            <td><code>server.log_level</code></td>
+            <td>Log level (info, debug, error)</td>
+            <td>info</td>
+          </tr>
+          <tr>
+            <td><code>bound_endpoints.poll_interval</code></td>
+            <td>Seconds between endpoint discovery</td>
+            <td>30</td>
+          </tr>
+          <tr>
+            <td><code>net.listen_interface</code></td>
+            <td>virtual, 0.0.0.0, IP, or interface name</td>
+            <td>virtual</td>
+          </tr>
+          <tr>
+            <td><code>net.start_port</code></td>
+            <td>Starting port for network mode</td>
+            <td>9080</td>
+          </tr>
+          <tr>
+            <td><code>net.overrides</code></td>
+            <td>Per-endpoint listen_interface overrides</td>
+            <td>{}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Hot Reload</h3>
+      <p>The daemon watches the config file and automatically reloads changes:</p>
+      <pre><code># Edit config
+sudo nano /etc/ngrokd/config.yml
+
+# Or in Docker
+docker exec -it ngrokd ngrokctl config edit
+
+# Changes apply automatically in ~5 seconds
+# Endpoints are rebound if listen_interface changes</code></pre>
+    </section>
+
+    <!-- Technical Details -->
+    <section id="technical" class="container section">
+      <h2>Technical Details</h2>
+
+      <h3>Architecture</h3>
+      <pre><code>Local Application
+    ↓ (resolves via /etc/hosts)
+Unique IP per Endpoint (virtual mode)
+    ↓ (daemon listener)
+mTLS Connection
+    ↓
+kubernetes-binding-ingress.ngrok.io
+    ↓
+Bound Endpoint (ngrok cloud)
+    ↓
+Your Backend Service</code></pre>
+
+      <h3>How It Works</h3>
+      
+      <div class="card">
+        <h4>1. Virtual Network Interface</h4>
+        <p>Creates an interface with subnet for unique IP allocation:</p>
+        <ul>
+          <li><strong>Linux:</strong> dummy interface <code>ngrokd0</code> with 10.107.0.0/16 subnet</li>
+          <li><strong>macOS:</strong> loopback aliases on <code>lo0</code> with 127.0.0.0/8 subnet</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>2. IP Allocation</h4>
+        <p>Each discovered endpoint gets a unique IP:</p>
+        <pre><code>10.107.0.2 → api.example.com
+10.107.0.3 → web.example.com
+10.107.0.4 → db.example.com</code></pre>
+        <p>IP mappings persist across restarts in <code>/etc/ngrokd/ip_mappings.json</code></p>
+      </div>
+
+      <div class="card">
+        <h4>3. DNS Management</h4>
+        <p>Automatically updates /etc/hosts:</p>
+        <pre><code># BEGIN ngrokd managed section
+10.107.0.2    api.example.com
+10.107.0.3    web.example.com
+# END ngrokd managed section</code></pre>
+      </div>
+
+      <div class="card">
+        <h4>4. Traffic Forwarding</h4>
+        <p>Each endpoint has a listener that forwards via mTLS:</p>
+        <pre><code>Local app → Listener (unique IP:port) → mTLS → ngrok cloud → Backend</code></pre>
+      </div>
+
+      <h3>Network Modes</h3>
+      
+      <div class="card">
+        <h4>Virtual Mode</h4>
+        <p><strong>Pros:</strong></p>
+        <ul>
+          <li>Multiple endpoints can use the same port (e.g., all on port 80)</li>
+          <li>DNS works via /etc/hosts</li>
+          <li>Clean separation per endpoint</li>
+        </ul>
+        <p><strong>Cons:</strong></p>
+        <ul>
+          <li>Only accessible from same machine</li>
+          <li>Requires root for /etc/hosts and interface management</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>Network Mode</h4>
+        <p><strong>Pros:</strong></p>
+        <ul>
+          <li>Accessible from network (other machines, containers)</li>
+          <li>Easy to configure firewalls (single port range)</li>
+          <li>Works well with Docker port mappings</li>
+        </ul>
+        <p><strong>Cons:</strong></p>
+        <ul>
+          <li>Uses sequential ports (can't have multiple endpoints on port 80)</li>
+          <li>Need to check ngrokctl list to see port assignments</li>
+        </ul>
+      </div>
+
+      <h3>Automatic Features</h3>
+      <ul>
+        <li><strong>Port Conflict Resolution:</strong> Automatically finds next available port if conflict detected</li>
+        <li><strong>Certificate Management:</strong> Auto-provisions and renews mTLS certificates</li>
+        <li><strong>Hot Reload:</strong> Config changes detected and applied automatically</li>
+        <li><strong>State Persistence:</strong> IP and port mappings survive restarts</li>
+      </ul>
+    </section>
+
+    <!-- Troubleshooting -->
+    <section id="troubleshooting" class="container section">
+      <h2>Troubleshooting</h2>
+
+      <div class="card">
+        <h3>No Endpoints Discovered</h3>
+        <p><strong>Symptoms:</strong> <code>ngrokctl list</code> shows 0 endpoints</p>
+        <p><strong>Solutions:</strong></p>
+        <ul>
+          <li>Wait 30 seconds for first poll cycle</li>
+          <li>Verify API key is set: <code>ngrokctl status</code></li>
+          <li>Check bound endpoints exist in ngrok dashboard</li>
+          <li>Check daemon logs: <code>tail ~/ngrokd.log</code></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Connection Refused</h3>
+        <p><strong>Symptoms:</strong> <code>curl: (7) Failed to connect</code></p>
+        <p><strong>Solutions:</strong></p>
+        <ul>
+          <li>Verify daemon is running: <code>ps aux | grep ngrokd</code></li>
+          <li>Check endpoint is listed: <code>ngrokctl list</code></li>
+          <li>Verify DNS entry in /etc/hosts (virtual mode)</li>
+          <li>Check IP allocation: <code>cat /etc/ngrokd/ip_mappings.json</code></li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Port Already in Use</h3>
+        <p><strong>Symptoms:</strong> <code>bind: address already in use</code></p>
+        <p><strong>What happens:</strong> Daemon automatically retries with next port (up to 20 attempts)</p>
+        <p><strong>Check logs:</strong></p>
+        <pre><code>tail ~/ngrokd.log | grep "Port in use, trying next port"</code></pre>
+        <p>If you see this, the conflict was automatically resolved!</p>
+      </div>
+
+      <div class="card">
+        <h3>Docker: Can't Access Endpoints from Host</h3>
+        <p><strong>Issue:</strong> Using virtual mode, virtual IPs only exist inside container</p>
+        <p><strong>Solution:</strong> Use <code>listen_interface: "0.0.0.0"</code> for Docker</p>
+        <pre><code># Edit config
+docker exec -it ngrokd ngrokctl config edit
+
+# Change to:
+listen_interface: "0.0.0.0"
+
+# Wait ~5s for reload
+docker exec ngrokd ngrokctl list
+
+# Access from host
+curl http://localhost:9080/</code></pre>
+      </div>
+
+      <div class="card">
+        <h3>Network Interface Errors</h3>
+        <p><strong>Symptoms:</strong> <code>Failed to create virtual network interface</code></p>
+        <p><strong>Solutions:</strong></p>
+        <ul>
+          <li>Ensure running as root/sudo</li>
+          <li>On Linux: Check kernel modules for dummy interface</li>
+          <li>On macOS: Verify permissions for ifconfig</li>
+          <li>Check logs for specific error details</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>Invalid Interface Name</h3>
+        <p><strong>Symptoms:</strong> <code>Config validation failed</code> with interface name</p>
+        <p><strong>Solution:</strong> Check available interfaces:</p>
+        <pre><code># Linux
+ip addr show
+
+# macOS
+ifconfig
+
+# Docker
+docker exec ngrokd ip addr show</code></pre>
+        <p>Use the correct interface name from the list (e.g., <code>enp0s1</code> instead of <code>eth0</code>)</p>
+      </div>
+    </section>
+
+    <!-- CLI Reference -->
+    <section class="container section">
+      <h2>CLI Reference</h2>
+
+      <h3>ngrokctl Commands</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Command</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ngrokctl status</code></td>
+            <td>Check daemon registration status</td>
+          </tr>
+          <tr>
+            <td><code>ngrokctl list</code></td>
+            <td>List discovered endpoints</td>
+          </tr>
+          <tr>
+            <td><code>ngrokctl health</code></td>
+            <td>Detailed health information</td>
+          </tr>
+          <tr>
+            <td><code>ngrokctl set-api-key KEY</code></td>
+            <td>Set ngrok API key</td>
+          </tr>
+          <tr>
+            <td><code>ngrokctl config edit</code></td>
+            <td>Edit configuration file</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Requirements -->
+    <section class="container section">
+      <h2>Requirements</h2>
+      <ul>
+        <li><strong>ngrok API Key:</strong> Get from <a href="https://dashboard.ngrok.com/api">https://dashboard.ngrok.com/api</a></li>
+        <li><strong>Bound Endpoints:</strong> Create Kubernetes bound endpoints in ngrok dashboard</li>
+        <li><strong>Root/sudo:</strong> Required for network interface and /etc/hosts management</li>
+        <li><strong>Platform:</strong> Linux, macOS, or Docker (Windows planned)</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>ngrokd v0.2.0 | Based on the ngrok Kubernetes Operator connection protocol</p>
+      <p style="margin-top: 0.5rem;"><a href="https://github.com/ishanj12/ngrokd">GitHub</a> | <a href="https://hub.docker.com/r/ishanjain8108/ngrokd">Docker Hub</a></p>
+    </div>
+  </footer>
+
+  <script src="js/tabs.js"></script>
+</body>
+</html>

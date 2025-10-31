@@ -1,0 +1,22 @@
+services:
+  ngrokd:
+    build: .
+    container_name: ngrokd
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - NGROK_API_KEY=${NGROK_API_KEY}
+    ports:
+      - "10080-10100:9080-9100"
+    volumes:
+      - ngrokd-data:/etc/ngrokd
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  ngrokd-data:
