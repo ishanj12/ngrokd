@@ -149,6 +149,7 @@ func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint
 	}
 
 	f.logger.V(1).Info("upgrading connection", "host", host, "port", endpoint.Port)
+	f.logger.Info("🔍 DEBUG: Upgrading to ngrok", "host", host, "port", endpoint.Port, "uri", endpoint.URI)
 
 	// Step 3: Upgrade connection with binding protocol
 	resp, err := mux.UpgradeToBindingConnection(f.logger, ngrokConn, host, endpoint.Port)
@@ -211,8 +212,8 @@ func loadNgrokCerts(pool *x509.CertPool) error {
 	return nil
 }
 
-// extractHost extracts the hostname from an endpoint URI
-// Example: "https://my-app.ngrok.app" -> "my-app.ngrok.app"
+// extractHost extracts the hostname from an endpoint URI (without port)
+// Example: "http://my-app.ngrok.app:81" -> "my-app.ngrok.app"
 func extractHost(endpointURI string) (string, error) {
 	parsed, err := url.Parse(endpointURI)
 	if err != nil {
@@ -224,5 +225,11 @@ func extractHost(endpointURI string) (string, error) {
 		host = parsed.Path
 	}
 
-	return host, nil
+	// Strip port if present
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+
+	return hostname, nil
 }
