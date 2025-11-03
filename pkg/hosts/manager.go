@@ -22,7 +22,7 @@ type Manager struct {
 
 // NewManager creates a new hosts file manager
 func NewManager(logger logr.Logger) *Manager {
-	hostsPath := "/etc/hosts"
+	hostsPath := getDefaultHostsPath()
 	
 	// For testing on non-root systems, allow override
 	if testPath := os.Getenv("NGROKD_HOSTS_PATH"); testPath != "" {
