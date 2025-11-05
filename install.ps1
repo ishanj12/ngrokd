@@ -100,12 +100,12 @@ Write-Host "✓ Created $ConfigDir" -ForegroundColor Green
 # Create default config if doesn't exist
 $configFile = "$ConfigDir\config.yml"
 if (-not (Test-Path $configFile)) {
-    $configContent = @"
+    @"
 api:
   url: https://api.ngrok.com
-  key: ""
+  key: ""  # Set via: ngrokctl set-api-key YOUR_KEY
 
-ingressEndpoint: kubernetes-binding-ingress.ngrok.io:443
+ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
 
 server:
   log_level: info
@@ -115,17 +115,14 @@ server:
 
 bound_endpoints:
   poll_interval: 30
-  selectors:
-    - 'true'
+  selectors: ['true']
 
 net:
   interface_name: ngrokd0
   subnet: 127.0.0.0/8
   listen_interface: virtual
   start_port: 9080
-"@
-    
-    $configContent | Out-File -FilePath $configFile -Encoding UTF8
+"@ | Out-File -FilePath $configFile -Encoding UTF8
     
     Write-Host "✓ Created default config" -ForegroundColor Green
 } else {
