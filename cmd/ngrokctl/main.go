@@ -11,8 +11,7 @@ import (
 )
 
 const (
-	defaultSocketPath = "/var/run/ngrokd.sock"
-	healthEndpoint    = "http://127.0.0.1:8081"
+	healthEndpoint = "http://127.0.0.1:8081"
 )
 
 type Command struct {
