@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -110,7 +109,7 @@ func getSocketPath() string {
 func sendCommand(cmd Command) (*Response, error) {
 	socketPath := getSocketPath()
 	
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := dialSocket(socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to daemon: %w\nIs ngrokd running?", err)
 	}

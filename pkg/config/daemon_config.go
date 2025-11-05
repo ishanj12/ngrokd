@@ -75,13 +75,13 @@ func (c *DaemonConfig) setDefaults() {
 		c.Server.LogLevel = "info"
 	}
 	if c.Server.SocketPath == "" {
-		c.Server.SocketPath = "/var/run/ngrokd.sock"
+		c.Server.SocketPath = getDefaultSocketPath()
 	}
 	if c.Server.ClientCert == "" {
-		c.Server.ClientCert = "/etc/ngrokd/tls.crt"
+		c.Server.ClientCert = getDefaultCertPath()
 	}
 	if c.Server.ClientKey == "" {
-		c.Server.ClientKey = "/etc/ngrokd/tls.key"
+		c.Server.ClientKey = getDefaultKeyPath()
 	}
 	if c.BoundEndpoints.PollInterval == 0 {
 		c.BoundEndpoints.PollInterval = 30

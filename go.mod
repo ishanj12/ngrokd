@@ -14,4 +14,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/vishvananda/netns v0.0.5 // indirect
+require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/vishvananda/netns v0.0.5 // indirect
+)

@@ -67,22 +67,14 @@ func NewServer(socketPath string, daemon DaemonController, logger logr.Logger) *
 	}
 }
 
-// Start starts the unix socket server
+// Start starts the socket server (Unix socket or Windows named pipe)
 func (s *Server) Start() error {
-	// Remove old socket if exists
-	os.Remove(s.socketPath)
-	
-	listener, err := net.Listen("unix", s.socketPath)
+	listener, err := s.createListener()
 	if err != nil {
-		return fmt.Errorf("failed to create unix socket: %w", err)
+		return err
 	}
 	
 	s.listener = listener
-	
-	// Set permissions (readable/writable by all for easier CLI access)
-	if err := os.Chmod(s.socketPath, 0666); err != nil {
-		s.logger.Error(err, "Failed to set socket permissions")
-	}
 	
 	s.logger.Info("Unix socket server started", "path", s.socketPath)
 	
