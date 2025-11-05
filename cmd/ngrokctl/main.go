@@ -291,7 +291,7 @@ func cmdSetAPIKey(apiKey string) {
 }
 
 func cmdConfigEdit() {
-	configPath := "/etc/ngrokd/config.yml"
+	configPath := getConfigPath()
 	
 	// Check if file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
