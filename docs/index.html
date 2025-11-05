@@ -285,31 +285,16 @@ net:
   listen_interface: virtual
   start_port: 9080</code></pre>
 
-        <h3>Manual Testing (Before Install)</h3>
-        <p>To test the binaries before installing:</p>
-        <pre><code># Create config directory
-mkdir C:\ProgramData\ngrokd
-
-# Create basic config
-notepad C:\ProgramData\ngrokd\config.yml
-
-# Start daemon (as Administrator)
-.\ngrokd.exe --config="C:\ProgramData\ngrokd\config.yml"</code></pre>
-
-        <p style="margin-top: 1rem;">In another PowerShell window:</p>
-        <pre><code>cd ngrokd-v0.2.0-windows-amd64
-.\ngrokctl.exe set-api-key YOUR_NGROK_API_KEY
-.\ngrokctl.exe status
-.\ngrokctl.exe list</code></pre>
-
-        <h3>After Running install.ps1</h3>
-        <p>Once installed, ngrokd and ngrokctl are in your PATH:</p>
-        <pre><code># Start daemon (as Administrator)
+        <h3>Start Daemon</h3>
+        <p><strong>Restart PowerShell as Administrator (for PATH to take effect), then:</strong></p>
+        <pre><code># Foreground mode
 ngrokd --config="C:\ProgramData\ngrokd\config.yml"
 
-# Use ngrokctl from anywhere
-ngrokctl status
-ngrokctl list</code></pre>
+# Background mode
+Start-Process ngrokd -ArgumentList '--config=C:\ProgramData\ngrokd\config.yml' -WindowStyle Hidden</code></pre>
+
+        <h3>Set API Key</h3>
+        <pre><code>ngrokctl set-api-key YOUR_NGROK_API_KEY</code></pre>
 
         <p style="margin-top: 1rem;"><strong>Note:</strong> ngrokd requires Administrator privileges to manage the hosts file and network adapters. See the <a href="https://github.com/ishanj12/ngrokd/blob/main/WINDOWS.md" target="_blank">Windows Guide</a> for details.</p>
       </div>
