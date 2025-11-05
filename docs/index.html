@@ -246,16 +246,44 @@ curl http://your-endpoint/</code></pre>
       </div>
 
       <div id="install-windows" class="tab-content">
-        <h3>Download Pre-built Binaries</h3>
-        <pre><code># Download package
-iwr https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
-
-# Extract
+        <h3>Installation Steps</h3>
+        <p><strong>Run PowerShell as Administrator</strong></p>
+        
+        <p><strong>1. Download and extract:</strong></p>
+        <pre><code>iwr https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
 tar -xzf ngrokd.tar.gz
-cd ngrokd-v0.2.0-windows-amd64
+cd ngrokd-v0.2.0-windows-amd64</code></pre>
 
-# Run installer
-.\install.ps1</code></pre>
+        <p><strong>2. Install binaries:</strong></p>
+        <pre><code># Copy to permanent location
+mkdir "C:\Program Files\ngrokd" -Force
+Copy-Item .\ngrokd.exe "C:\Program Files\ngrokd\"
+Copy-Item .\ngrokctl.exe "C:\Program Files\ngrokd\"
+
+# Add to PATH
+$oldPath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+$newPath = "$oldPath;C:\Program Files\ngrokd"
+[Environment]::SetEnvironmentVariable("Path", $newPath, "Machine")
+$env:Path += ";C:\Program Files\ngrokd"</code></pre>
+
+        <p><strong>3. Create config:</strong></p>
+        <pre><code>mkdir C:\ProgramData\ngrokd -Force
+notepad C:\ProgramData\ngrokd\config.yml</code></pre>
+        
+        <p>Paste this config and save:</p>
+        <pre><code>api:
+  url: https://api.ngrok.com
+  key: ""
+ingressEndpoint: kubernetes-binding-ingress.ngrok.io:443
+server:
+  log_level: info
+bound_endpoints:
+  poll_interval: 30
+  selectors: ['true']
+net:
+  subnet: 127.0.0.0/8
+  listen_interface: virtual
+  start_port: 9080</code></pre>
 
         <h3>Manual Testing (Before Install)</h3>
         <p>To test the binaries before installing:</p>
