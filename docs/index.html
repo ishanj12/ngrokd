@@ -137,13 +137,18 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
             <td>lo0 aliases</td>
           </tr>
           <tr>
+            <td>Windows</td>
+            <td>127.0.0.0/8</td>
+            <td>Loopback Adapter</td>
+          </tr>
+          <tr>
             <td>Docker</td>
             <td>Configurable</td>
             <td>virtual/0.0.0.0</td>
           </tr>
         </tbody>
       </table>
-      <p style="margin-top: 1rem;"><em>Windows support is planned for a future release.</em></p>
+      <p style="margin-top: 1rem;"><em>All platforms support both virtual mode (unique IPs) and network mode (port-based access).</em></p>
     </section>
 
     <!-- Installation -->
@@ -153,6 +158,7 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
       <div class="tabs">
         <button class="tab" onclick="switchTab('install-macos')">macOS</button>
         <button class="tab" onclick="switchTab('install-linux')">Linux</button>
+        <button class="tab" onclick="switchTab('install-windows')">Windows</button>
         <button class="tab" onclick="switchTab('install-docker')">Docker</button>
       </div>
 
@@ -237,6 +243,41 @@ sudo systemctl start ngrokd</code></pre>
         <pre><code>ngrokctl status
 ngrokctl list
 curl http://your-endpoint/</code></pre>
+      </div>
+
+      <div id="install-windows" class="tab-content">
+        <h3>Quick Install (Recommended)</h3>
+        <p><strong>Run PowerShell as Administrator</strong>, then:</p>
+        <pre><code>iwr -useb https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.ps1 | iex</code></pre>
+        
+        <h3>Download Pre-built Binaries</h3>
+        <pre><code># Download package
+iwr https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
+
+# Extract
+tar -xzf ngrokd.tar.gz
+cd ngrokd-v0.2.0-windows-amd64
+
+# Run installer
+.\install.ps1</code></pre>
+
+        <h3>Start Daemon</h3>
+        <p><strong>Run as Administrator:</strong></p>
+        <pre><code># Foreground mode
+ngrokd --config="C:\ProgramData\ngrokd\config.yml"
+
+# Background mode
+Start-Process ngrokd -ArgumentList '--config=C:\ProgramData\ngrokd\config.yml' -WindowStyle Hidden</code></pre>
+
+        <h3>Set API Key</h3>
+        <pre><code>ngrokctl set-api-key YOUR_NGROK_API_KEY</code></pre>
+
+        <h3>Verify</h3>
+        <pre><code>ngrokctl status
+ngrokctl list
+curl.exe http://127.0.0.2/</code></pre>
+
+        <p style="margin-top: 1rem;"><strong>Note:</strong> ngrokd requires Administrator privileges to manage the hosts file and network adapters. See the <a href="https://github.com/ishanj12/ngrokd/blob/main/WINDOWS.md" target="_blank">Windows Guide</a> for details.</p>
       </div>
 
       <div id="install-docker" class="tab-content">
