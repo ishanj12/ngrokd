@@ -109,9 +109,9 @@ ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
 
 server:
   log_level: info
-  socket_path: \\.\pipe\ngrokd
-  client_cert: $ConfigDir\tls.crt
-  client_key: $ConfigDir\tls.key
+  socket_path: \\\\.\\pipe\\ngrokd
+  client_cert: $ConfigDir\\tls.crt
+  client_key: $ConfigDir\\tls.key
 
 bound_endpoints:
   poll_interval: 30
