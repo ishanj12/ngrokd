@@ -299,67 +299,8 @@ func cmdConfigEdit() {
 		os.Exit(1)
 	}
 	
-	// Check if running in Docker (/.dockerenv exists)
-	inDocker := false
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		inDocker = true
-	}
-	
-	// In Docker, use nano which works with docker exec -it
-	if inDocker {
-		fmt.Println("Opening config with nano...")
-		fmt.Println("Press Ctrl+X to exit, Y to save, Enter to confirm")
-		fmt.Println()
-		
-		cmd := exec.Command("nano", configPath)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		
-		if err := cmd.Run(); err != nil {
-			fmt.Printf("Error opening config: %v\n", err)
-			fmt.Println()
-			fmt.Println("Alternative: From host machine, run:")
-			fmt.Println("  docker cp ngrokd:/etc/ngrokd/config.yml ./config.yml")
-			fmt.Println("  vim config.yml")
-			fmt.Println("  docker cp ./config.yml ngrokd:/etc/ngrokd/config.yml")
-			os.Exit(1)
-		}
-		return
-	}
-	
-	// Get editor from environment or use default
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = os.Getenv("VISUAL")
-	}
-	if editor == "" {
-		// Try vi first (works in Alpine/Docker), fallback to vim
-		if _, err := exec.LookPath("vi"); err == nil {
-			editor = "vi"
-		} else {
-			editor = "vim"
-		}
-	}
-	
-	// Check if we're running as root (skip sudo)
-	needSudo := os.Geteuid() != 0
-	
-	// Execute editor
-	var cmd *exec.Cmd
-	if needSudo {
-		fmt.Printf("Opening %s with sudo %s...\n", configPath, editor)
-		cmd = exec.Command("sudo", editor, configPath)
-	} else {
-		fmt.Printf("Opening %s with %s...\n", configPath, editor)
-		cmd = exec.Command(editor, configPath)
-	}
-	
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	
-	if err := cmd.Run(); err != nil {
+	// Open editor (platform-specific)
+	if err := openEditor(configPath); err != nil {
 		fmt.Printf("Error opening config: %v\n", err)
 		os.Exit(1)
 	}
