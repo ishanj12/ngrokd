@@ -296,6 +296,11 @@ Start-Process ngrokd -ArgumentList '--config=C:\ProgramData\ngrokd\config.yml' -
         <h3>Set API Key</h3>
         <pre><code>ngrokctl set-api-key YOUR_NGROK_API_KEY</code></pre>
 
+        <h3>Verify</h3>
+        <pre><code>ngrokctl status
+ngrokctl list
+curl.exe http://127.0.0.2/</code></pre>
+
         <p style="margin-top: 1rem;"><strong>Note:</strong> ngrokd requires Administrator privileges to manage the hosts file and network adapters. See the <a href="https://github.com/ishanj12/ngrokd/blob/main/WINDOWS.md" target="_blank">Windows Guide</a> for details.</p>
       </div>
 
