@@ -25,18 +25,25 @@ create_package() {
     # Create package directory
     mkdir -p "$pkg_dir"
     
-    # Copy binaries
-    cp "$DIST_DIR/ngrokd-${platform}-${arch}" "$pkg_dir/ngrokd"
-    cp "$DIST_DIR/ngrokctl-${platform}-${arch}" "$pkg_dir/ngrokctl"
-    chmod +x "$pkg_dir/ngrokd" "$pkg_dir/ngrokctl"
-    
-    # Copy install script
-    cp install.sh "$pkg_dir/install.sh"
-    chmod +x "$pkg_dir/install.sh"
-    
-    # Copy uninstall script
-    cp uninstall.sh "$pkg_dir/uninstall.sh"
-    chmod +x "$pkg_dir/uninstall.sh"
+    # Copy binaries (platform-specific)
+    if [ "$platform" = "windows" ]; then
+        cp "$DIST_DIR/ngrokd-${platform}-${arch}.exe" "$pkg_dir/ngrokd.exe"
+        cp "$DIST_DIR/ngrokctl-${platform}-${arch}.exe" "$pkg_dir/ngrokctl.exe"
+        
+        # Copy Windows install/uninstall scripts
+        cp install.ps1 "$pkg_dir/install.ps1"
+        cp uninstall.ps1 "$pkg_dir/uninstall.ps1"
+    else
+        cp "$DIST_DIR/ngrokd-${platform}-${arch}" "$pkg_dir/ngrokd"
+        cp "$DIST_DIR/ngrokctl-${platform}-${arch}" "$pkg_dir/ngrokctl"
+        chmod +x "$pkg_dir/ngrokd" "$pkg_dir/ngrokctl"
+        
+        # Copy Unix install/uninstall scripts
+        cp install.sh "$pkg_dir/install.sh"
+        chmod +x "$pkg_dir/install.sh"
+        cp uninstall.sh "$pkg_dir/uninstall.sh"
+        chmod +x "$pkg_dir/uninstall.sh"
+    fi
     
     # Create README
     cat > "$pkg_dir/README.txt" << 'EOF'
@@ -139,6 +146,8 @@ create_package "linux" "amd64"
 create_package "linux" "arm64"
 create_package "darwin" "amd64"
 create_package "darwin" "arm64"
+create_package "windows" "amd64"
+create_package "windows" "arm64"
 
 # Show results
 echo ""

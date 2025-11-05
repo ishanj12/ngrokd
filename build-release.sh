@@ -32,6 +32,16 @@ echo "Building macOS ARM64..."
 GOOS=darwin GOARCH=arm64 go build -o dist/ngrokd-darwin-arm64 ./cmd/ngrokd
 GOOS=darwin GOARCH=arm64 go build -o dist/ngrokctl-darwin-arm64 ./cmd/ngrokctl
 
+# Build for Windows AMD64
+echo "Building Windows AMD64..."
+GOOS=windows GOARCH=amd64 go build -o dist/ngrokd-windows-amd64.exe ./cmd/ngrokd
+GOOS=windows GOARCH=amd64 go build -o dist/ngrokctl-windows-amd64.exe ./cmd/ngrokctl
+
+# Build for Windows ARM64
+echo "Building Windows ARM64..."
+GOOS=windows GOARCH=arm64 go build -o dist/ngrokd-windows-arm64.exe ./cmd/ngrokd
+GOOS=windows GOARCH=arm64 go build -o dist/ngrokctl-windows-arm64.exe ./cmd/ngrokctl
+
 # Make all executable
 chmod +x dist/*
 
