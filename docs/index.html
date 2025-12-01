@@ -76,42 +76,30 @@
 
       <div class="card">
         <h3>1. Create an ngrok API Key</h3>
-        <p>The API key allows ngrokd to discover your bound endpoints and provision certificates.</p>
-        
-        <p><strong>Steps:</strong></p>
         <ol>
-          <li>Go to <a href="https://dashboard.ngrok.com/api" target="_blank">https://dashboard.ngrok.com/api</a></li>
+          <li>Go to <a href="https://dashboard.ngrok.com/api" target="_blank">ngrok API dashboard</a></li>
           <li>Click "New API Key"</li>
           <li>Give it a description (e.g., "ngrokd daemon")</li>
-          <li>Copy the API key (you'll use it with <code>ngrokctl set-api-key</code>)</li>
+          <li>Copy the API key - you'll use it with <code>ngrokctl set-api-key</code></li>
         </ol>
-
-        <p style="margin-top: 1rem;"><strong>Note:</strong> Keep this key secure! It has access to your ngrok account.</p>
+        <p style="margin-top: 1rem;"><em>The API key allows ngrokd to discover your bound endpoints and provision certificates.</em></p>
       </div>
 
       <div class="card">
         <h3>2. Create Private Cloud Endpoints</h3>
-        <p>Bound endpoints connect your Kubernetes services to ngrok's cloud. ngrokd automatically discovers these.</p>
-        
-        <p><strong>Using ngrok Dashboard:</strong></p>
         <ol>
-          <li>Go to <a href="https://dashboard.ngrok.com/cloud-edge/endpoints" target="_blank">https://dashboard.ngrok.com/cloud-edge/endpoints</a></li>
+          <li>Go to <a href="https://dashboard.ngrok.com/cloud-edge/endpoints" target="_blank">ngrok Endpoints dashboard</a></li>
           <li>Click "New Endpoint" → "Cloud"</li>
           <li>Choose "Kubernetes Operator" as the binding type</li>
-          <li>Configure:
+          <li>Configure your endpoint:
             <ul>
-              <li><strong>URL:</strong> Format as <code>identifier.subdomain</code> (e.g., <code>api.myapp</code>)</li>
-              <li><strong>Traffic Policy:</strong> Configure routing rules, authentication, or custom responses</li>
+              <li><strong>URL:</strong> <code>identifier.subdomain</code> (e.g., <code>api.myapp</code>)</li>
+              <li><strong>Traffic Policy:</strong> Optional routing rules, auth, rate limiting</li>
             </ul>
           </li>
           <li>Click "Create Endpoint"</li>
         </ol>
-
-        <p style="margin-top: 1.5rem;"><strong>Verify endpoints exist:</strong></p>
-        <pre><code># List your bound endpoints
-curl -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Ngrok-Version: 2" \
-  https://api.ngrok.com/endpoints</code></pre>
+        <p style="margin-top: 1rem;"><em>ngrokd automatically discovers these endpoints and creates local access points for them.</em></p>
       </div>
     </section>
 
