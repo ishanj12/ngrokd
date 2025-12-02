@@ -297,8 +297,6 @@ curl.exe http://your-endpoint/</code></pre>
         <pre><code>docker pull ishanjain8108/ngrokd:latest</code></pre>
 
         <h3>Run Container</h3>
-        
-        <p><strong>Virtual Mode (requires NET_ADMIN):</strong></p>
         <pre><code>docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
@@ -306,31 +304,8 @@ curl.exe http://your-endpoint/</code></pre>
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
   ishanjain8108/ngrokd:latest</code></pre>
-
-        <p><strong>Network Mode (no privileges needed - recommended for ECS Fargate):</strong></p>
-        <pre><code># Create custom config with network mode
-echo 'api:
-  url: https://api.ngrok.com
-  key: ""
-ingressEndpoint: kubernetes-binding-ingress.ngrok.io:443
-server:
-  log_level: info
-bound_endpoints:
-  poll_interval: 30
-  selectors: ["true"]
-net:
-  listen_interface: "0.0.0.0"
-  start_port: 9080' > ngrokd-config.yml
-
-# Run without NET_ADMIN
-docker run -d \
-  --name ngrokd \
-  -e NGROK_API_KEY=your_api_key \
-  -p 9080-9100:9080-9100 \
-  -v $(pwd)/ngrokd-config.yml:/etc/ngrokd/config.yml \
-  ishanjain8108/ngrokd:latest</code></pre>
         
-        <p style="margin-top: 1rem;"><em><strong>Note:</strong> Network mode works on restrictive environments (ECS Fargate, rootless containers). Virtual mode provides DNS but requires NET_ADMIN capability.</em></p>
+        <p style="margin-top: 1rem;"><em><strong>Note:</strong> If NET_ADMIN privileges are not available (e.g., ECS Fargate), remove the <code>--cap-add=NET_ADMIN</code> line and ngrokd will automatically use network mode instead of virtual mode.</em></p>
 
         <h3>Verify</h3>
         <pre><code># Check status
