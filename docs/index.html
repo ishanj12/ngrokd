@@ -305,7 +305,7 @@ curl.exe http://your-endpoint/</code></pre>
   -v ngrokd-data:/etc/ngrokd \
   ishanjain8108/ngrokd:latest</code></pre>
         
-        <p style="margin-top: 1rem;"><em><strong>Note:</strong> If NET_ADMIN privileges are not available (e.g., ECS Fargate), remove the <code>--cap-add=NET_ADMIN</code> line and ngrokd will automatically use network mode instead of virtual mode.</em></p>
+        <p style="margin-top: 1rem;"><em><strong>Note:</strong> If NET_ADMIN privileges are not available, remove the <code>--cap-add=NET_ADMIN</code> line and ngrokd will automatically use network mode instead of virtual mode.</em></p>
 
         <h3>Verify</h3>
         <pre><code># Check status
