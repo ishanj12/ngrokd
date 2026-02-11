@@ -15,6 +15,7 @@ type DaemonController interface {
 	GetStatus() StatusResponse
 	ListEndpoints() []EndpointInfo
 	SetAPIKey(key string) error
+	RefreshCert(force bool) error
 }
 
 // Command represents a command from the ngrok client
@@ -141,7 +142,18 @@ func (s *Server) executeCommand(cmd Command) Response {
 			return Response{Success: false, Error: err.Error()}
 		}
 		return Response{Success: true, Data: "API key set successfully"}
-		
+
+	case "refresh-cert":
+		force := len(cmd.Args) > 0 && cmd.Args[0] == "--force"
+		err := s.daemon.RefreshCert(force)
+		if err != nil {
+			return Response{Success: false, Error: err.Error()}
+		}
+		if force {
+			return Response{Success: true, Data: "Certificate renewal forced (check daemon logs)"}
+		}
+		return Response{Success: true, Data: "Certificate refresh triggered (check daemon logs)"}
+
 	default:
 		return Response{Success: false, Error: fmt.Sprintf("unknown command: %s", cmd.Command)}
 	}

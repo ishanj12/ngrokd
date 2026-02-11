@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/ishanjain/ngrok-forward-proxy/internal/mux"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
 )
 
 // Config holds the configuration for the forwarder
@@ -19,8 +20,12 @@ type Config struct {
 	// Default: kubernetes-binding-ingress.ngrok.io:443
 	IngressEndpoint string
 
-	// TLSCert is the client certificate for mTLS authentication
+	// TLSCert is the client certificate for mTLS authentication (deprecated, use CertHolder)
 	TLSCert tls.Certificate
+
+	// CertHolder provides dynamic certificate access for hot-reload support.
+	// If set, this takes precedence over TLSCert.
+	CertHolder *cert.CertHolder
 
 	// RootCAs is an optional custom CA pool for TLS verification
 	RootCAs *tls.Config
@@ -72,8 +77,13 @@ func New(config Config) (*Forwarder, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{config.TLSCert},
-		RootCAs:      rootCAs,
+		RootCAs: rootCAs,
+	}
+
+	if config.CertHolder != nil {
+		tlsConfig.GetClientCertificate = config.CertHolder.GetClientCertificate
+	} else {
+		tlsConfig.Certificates = []tls.Certificate{config.TLSCert}
 	}
 
 	// Override with custom RootCAs if provided
@@ -97,8 +107,6 @@ func New(config Config) (*Forwarder, error) {
 
 // ForwardConnection forwards a single connection to the specified bound endpoint
 func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint) error {
-	defer localConn.Close()
-
 	// Silently forward - verbose logging only
 	f.logger.V(1).Info("forwarding connection",
 		"endpoint", endpoint.Name,
@@ -149,7 +157,6 @@ func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint
 	}
 
 	f.logger.V(1).Info("upgrading connection", "host", host, "port", endpoint.Port)
-	f.logger.Info("🔍 DEBUG: Upgrading to ngrok", "host", host, "port", endpoint.Port, "uri", endpoint.URI)
 
 	// Step 3: Upgrade connection with binding protocol
 	resp, err := mux.UpgradeToBindingConnection(f.logger, ngrokConn, host, endpoint.Port)
@@ -161,14 +168,10 @@ func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint
 		"endpointID", resp.EndpointID,
 		"proto", resp.Proto)
 
-	// Step 4: Protocol-aware forwarding
-	if resp.Proto == "http" || resp.Proto == "https" {
-		// HTTP-aware proxy: rewrite Host header
-		err = rewriteHTTPHost(localConn, ngrokConn, host)
-	} else {
-		// Raw TCP proxy for non-HTTP protocols
-		err = rawProxy(localConn, ngrokConn)
-	}
+	// Step 4: Rewrite Host header to match endpoint, then raw proxy.
+	// The binding protocol already identifies the endpoint, but ngrok's
+	// server still validates the HTTP Host header against the tunnel.
+	err = hostRewritingProxy(localConn, ngrokConn, host, endpoint.Port)
 	if err != nil {
 		f.logger.V(1).Info("connection closed with error", "error", err)
 	} else {

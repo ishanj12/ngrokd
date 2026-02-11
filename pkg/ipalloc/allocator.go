@@ -192,6 +192,18 @@ func (a *Allocator) ReleaseIP(hostname string) {
 	a.logger.Info("Released hostname from IP", "hostname", hostname, "ip", ip)
 }
 
+// ReleaseAll releases all allocated IPs, resetting the allocator state.
+func (a *Allocator) ReleaseAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.allocated = make(map[string]string)
+	a.portsByIP = make(map[string]map[int]bool)
+	a.hostnameByIP = make(map[string][]string)
+
+	a.logger.Info("Released all IP allocations")
+}
+
 // LoadPersistentMappings loads hostname->IP mappings from disk
 func (a *Allocator) LoadPersistentMappings(path string) error {
 	data, err := os.ReadFile(path)

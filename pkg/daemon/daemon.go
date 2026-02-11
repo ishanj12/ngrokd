@@ -3,13 +3,17 @@ package daemon
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -37,6 +41,7 @@ type Daemon struct {
 	logger       logr.Logger
 	
 	certManager  *cert.Manager
+	certHolder   *cert.CertHolder
 	ipAllocator  *ipalloc.Allocator
 	hostsManager *hosts.Manager
 	socketServer *socket.Server
@@ -48,7 +53,11 @@ type Daemon struct {
 	
 	operatorID   string
 	registered   bool
+	apiClient    *ngrokapi.Client
 	configPath   string
+	
+	ctx              context.Context
+	cancel           context.CancelFunc
 	
 	mu               sync.RWMutex
 	endpoints        map[string]socket.EndpointInfo // endpoint ID -> info
@@ -63,6 +72,8 @@ func New(configPath string, logger logr.Logger) (*Daemon, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 	
+	ctx, cancel := context.WithCancel(context.Background())
+	
 	d := &Daemon{
 		config:             cfg,
 		logger:             logger,
@@ -70,6 +81,8 @@ func New(configPath string, logger logr.Logger) (*Daemon, error) {
 		endpoints:          make(map[string]socket.EndpointInfo),
 		nextPort:           cfg.Net.StartPort,
 		networkPortsByHost: make(map[string]int),
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 	
 	// Check if already registered
@@ -135,8 +148,8 @@ func (d *Daemon) Start() error {
 	
 	// Start health server
 	d.healthServer = health.NewServer(health.Config{
-		Address: "127.0.0.1",
-		Port:    8081,
+		Address: d.config.Server.HealthAddress,
+		Port:    d.config.Server.HealthPort,
 		Logger:  d.logger,
 	})
 	if err := d.healthServer.Start(); err != nil {
@@ -158,20 +171,68 @@ func (d *Daemon) Start() error {
 		}
 	}
 	
-	// If registered, start polling
+	// If registered, start polling and cert refresh
 	if d.registered {
 		if err := d.initializeForwarder(); err != nil {
 			return fmt.Errorf("failed to initialize forwarder: %w", err)
 		}
 		go d.pollingLoop()
+		go d.certRefreshLoop()
 	}
 	
 	// Start config file watcher for auto-reload
 	go d.watchConfig()
 	
-	// Run forever
 	d.logger.Info("Daemon started successfully")
-	select {}
+	
+	// Wait for shutdown signal
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-sigCh
+	d.logger.Info("Received signal, shutting down", "signal", sig)
+	
+	d.Shutdown()
+	return nil
+}
+
+// Shutdown cleanly tears down the daemon, removing all system-level
+// side effects (hosts entries, virtual IPs, listeners, socket file).
+func (d *Daemon) Shutdown() {
+	d.logger.Info("Shutting down daemon")
+	
+	// Cancel context to stop polling, cert refresh, and config watcher
+	d.cancel()
+	
+	// Close all listeners
+	if d.listenerMgr != nil {
+		d.listenerMgr.Close()
+	}
+	
+	// Remove /etc/hosts entries
+	if d.hostsManager != nil {
+		if err := d.hostsManager.RemoveAll(); err != nil {
+			d.logger.Error(err, "Failed to clean up /etc/hosts")
+		}
+	}
+	
+	// Destroy virtual network interface (removes all IPs)
+	if d.netInterface != nil {
+		if err := d.netInterface.Destroy(); err != nil {
+			d.logger.Error(err, "Failed to destroy network interface")
+		}
+	}
+	
+	// Stop health server
+	if d.healthServer != nil {
+		d.healthServer.Stop(context.Background())
+	}
+	
+	// Stop socket server
+	if d.socketServer != nil {
+		d.socketServer.Stop()
+	}
+	
+	d.logger.Info("Daemon stopped")
 }
 
 func (d *Daemon) register() error {
@@ -213,63 +274,109 @@ func (d *Daemon) register() error {
 	}
 	
 	d.logger.Info("Registration complete", "operatorID", d.operatorID)
+	d.apiClient = ngrokapi.NewClient(d.config.API.Key)
 	return nil
 }
 
 func (d *Daemon) initializeForwarder() error {
-	// Load certificate
-	cert, err := tls.LoadX509KeyPair(d.config.Server.ClientCert, d.config.Server.ClientKey)
+	tlsCert, err := tls.LoadX509KeyPair(d.config.Server.ClientCert, d.config.Server.ClientKey)
 	if err != nil {
 		return fmt.Errorf("failed to load certificate: %w", err)
 	}
-	
-	// Create forwarder
-	d.forwarder, err = forwarder.New(forwarder.Config{
+	certHolder := cert.NewCertHolder(tlsCert)
+
+	provisioner := cert.NewProvisioner(d.getCertDir())
+	if _, err := provisioner.EnsureCSR(); err != nil {
+		d.logger.Info("Could not ensure CSR for cert renewal", "error", err)
+	}
+
+	fwd, err := forwarder.New(forwarder.Config{
 		IngressEndpoint: d.config.IngressEndpoint,
-		TLSCert:         cert,
+		CertHolder:      certHolder,
 		Logger:          d.logger,
 	})
 	if err != nil {
 		return err
 	}
-	
-	// Create listener manager
-	d.listenerMgr = listener.New(d.forwarder, d.logger)
-	d.listenerMgr.SetStatusCallback(d.healthServer)
-	
+
+	lm := listener.New(fwd, d.logger)
+	lm.SetStatusCallback(d.healthServer)
+
+	d.mu.Lock()
+	d.certHolder = certHolder
+	d.forwarder = fwd
+	d.listenerMgr = lm
+	if d.apiClient == nil {
+		d.apiClient = ngrokapi.NewClient(d.config.API.Key)
+	}
+	d.mu.Unlock()
+
 	return nil
 }
 
 func (d *Daemon) pollingLoop() {
-	ticker := time.NewTicker(time.Duration(d.config.BoundEndpoints.PollInterval) * time.Second)
-	defer ticker.Stop()
-	
-	d.logger.Info("Starting polling loop", "interval", fmt.Sprintf("%ds", d.config.BoundEndpoints.PollInterval))
-	
-	// Poll immediately on startup
-	d.pollAndReconcile()
-	
-	for range ticker.C {
-		d.pollAndReconcile()
+	baseInterval := time.Duration(d.config.BoundEndpoints.PollInterval) * time.Second
+	currentInterval := baseInterval
+	maxBackoff := 5 * time.Minute
+	consecutiveErrors := 0
+
+	timer := time.NewTimer(0) // fire immediately
+	defer timer.Stop()
+
+	d.logger.Info("Starting polling loop", "interval", baseInterval.String())
+
+	for {
+		select {
+		case <-d.ctx.Done():
+			d.logger.Info("Polling loop stopped")
+			return
+		case <-timer.C:
+			if d.pollAndReconcile() {
+				consecutiveErrors = 0
+				currentInterval = baseInterval
+			} else {
+				consecutiveErrors++
+				currentInterval = baseInterval * time.Duration(1<<min(consecutiveErrors, 8))
+				if currentInterval > maxBackoff {
+					currentInterval = maxBackoff
+				}
+				d.logger.Info("Backing off after API error",
+					"consecutive_errors", consecutiveErrors,
+					"next_poll_in", currentInterval.String())
+			}
+			d.healthServer.SetReady(true)
+			timer.Reset(currentInterval)
+		}
 	}
 }
 
-func (d *Daemon) pollAndReconcile() {
+func (d *Daemon) pollAndReconcile() bool {
 	d.logger.V(1).Info("Polling for bound endpoints")
 	
-	// Fetch bound endpoints from API
-	ctx := context.Background()
-	client := ngrokapi.NewClient(d.config.API.Key)
+	ctx := d.ctx
+	d.mu.RLock()
+	client := d.apiClient
+	operatorID := d.operatorID
+	d.mu.RUnlock()
 	
-	apiEndpoints, err := client.ListBoundEndpoints(ctx, d.operatorID)
+	apiEndpoints, err := client.ListBoundEndpoints(ctx, operatorID)
 	if err != nil {
+		if ngrokapi.IsNotFound(err) {
+			d.logger.Info("Operator not found in ngrok API (deleted?) - re-registering",
+				"operatorID", operatorID)
+			d.reRegister()
+			return false
+		}
+		if ngrokapi.IsAuthError(err) {
+			d.logger.Error(err, "API key is invalid or revoked - update via: ngrokctl set-api-key <NEW_KEY>")
+			return false
+		}
 		d.logger.Error(err, "Failed to fetch bound endpoints")
-		return
+		return false
 	}
 	
 	d.logger.V(1).Info("Found bound endpoints", "count", len(apiEndpoints))
 	
-	// Build desired state
 	desired := make(map[string]ngrokapi.Endpoint)
 	for _, ep := range apiEndpoints {
 		desired[ep.ID] = ep
@@ -277,14 +384,12 @@ func (d *Daemon) pollAndReconcile() {
 	
 	d.mu.Lock()
 	
-	// Remove deleted endpoints
 	for id := range d.endpoints {
 		if _, exists := desired[id]; !exists {
 			d.removeEndpoint(id)
 		}
 	}
 	
-	// Add new endpoints
 	for id, ep := range desired {
 		if _, exists := d.endpoints[id]; !exists {
 			d.addEndpoint(ep)
@@ -293,16 +398,203 @@ func (d *Daemon) pollAndReconcile() {
 	
 	d.mu.Unlock()
 	
-	// Update /etc/hosts
 	d.updateHosts()
 	
-	// Save IP mappings
 	ipMappingsPath := d.getIPMappingsPath()
 	d.ipAllocator.SavePersistentMappings(ipMappingsPath)
 	
-	// Save network port mappings
 	networkPortsPath := d.getNetworkPortsPath()
 	d.saveNetworkPortMappings(networkPortsPath)
+	
+	return true
+}
+
+func (d *Daemon) certRefreshLoop() {
+	interval := time.Duration(d.config.Server.CertRefreshInterval) * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	d.logger.Info("Starting certificate refresh loop", "interval", interval.String())
+
+	for {
+		select {
+		case <-d.ctx.Done():
+			d.logger.Info("Certificate refresh loop stopped")
+			return
+		case <-ticker.C:
+			d.refreshCert()
+		}
+	}
+}
+
+func (d *Daemon) refreshCert() {
+	d.refreshCertWithForce(false)
+}
+
+func (d *Daemon) refreshCertWithForce(force bool) {
+	d.logger.Info("Checking for certificate renewal", "force", force)
+
+	certPEM, err := os.ReadFile(d.config.Server.ClientCert)
+	if err != nil {
+		d.logger.Error(err, "Failed to read current certificate")
+		return
+	}
+
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		d.logger.Error(nil, "Failed to decode certificate PEM")
+		return
+	}
+
+	x509Cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		d.logger.Error(err, "Failed to parse certificate")
+		return
+	}
+
+	remaining := time.Until(x509Cert.NotAfter)
+	lifetime := x509Cert.NotAfter.Sub(x509Cert.NotBefore)
+	renewThreshold := lifetime / 3
+
+	d.logger.Info("Certificate expiry check",
+		"notAfter", x509Cert.NotAfter.Format(time.RFC3339),
+		"remaining", remaining.Round(time.Minute).String(),
+		"renew_threshold", renewThreshold.Round(time.Minute).String())
+
+	if !force && remaining > renewThreshold {
+		d.logger.Info("Certificate still valid, no renewal needed")
+		return
+	}
+
+	if force {
+		d.logger.Info("Forcing certificate renewal (bypassing expiry check)")
+	} else {
+		d.logger.Info("Certificate approaching expiry, requesting renewal")
+	}
+
+	certDir := d.getCertDir()
+	provisioner := cert.NewProvisioner(certDir)
+	csrPEM, err := provisioner.EnsureCSR()
+	if err != nil {
+		d.logger.Error(err, "Failed to load/regenerate CSR for cert renewal")
+		return
+	}
+
+	ctx := d.ctx
+	d.mu.RLock()
+	client := d.apiClient
+	operatorID := d.operatorID
+	d.mu.RUnlock()
+
+	csrStr := string(csrPEM)
+	updateReq := &ngrokapi.KubernetesOperatorUpdate{
+		Binding: &ngrokapi.KubernetesOperatorBindingUpdate{
+			CSR: &csrStr,
+		},
+	}
+
+	operator, err := client.UpdateKubernetesOperator(ctx, operatorID, updateReq)
+	if err != nil {
+		if ngrokapi.IsNotFound(err) {
+			d.logger.Info("Operator not found during cert refresh (deleted?) - re-registering",
+				"operatorID", operatorID)
+			d.reRegister()
+			return
+		}
+		if ngrokapi.IsAuthError(err) {
+			d.logger.Error(err, "API key is invalid or revoked - update via: ngrokctl set-api-key <NEW_KEY>")
+			return
+		}
+		d.logger.Error(err, "Failed to refresh certificate via API")
+		return
+	}
+
+	if operator.Binding == nil || operator.Binding.Cert.Cert == "" {
+		d.logger.V(1).Info("No certificate returned in refresh response")
+		return
+	}
+
+	newCertPEM := []byte(operator.Binding.Cert.Cert)
+
+	d.logger.Info("Certificate renewed by API",
+		"notBefore", operator.Binding.Cert.NotBefore,
+		"notAfter", operator.Binding.Cert.NotAfter)
+
+	if err := os.WriteFile(d.config.Server.ClientCert, newCertPEM, 0644); err != nil {
+		d.logger.Error(err, "Failed to save renewed certificate to disk")
+		return
+	}
+
+	keyPEM, err := os.ReadFile(d.config.Server.ClientKey)
+	if err != nil {
+		d.logger.Error(err, "Failed to read private key for cert reload")
+		return
+	}
+
+	tlsCert, err := tls.X509KeyPair(newCertPEM, keyPEM)
+	if err != nil {
+		d.logger.Error(err, "Failed to parse renewed certificate")
+		return
+	}
+
+	d.mu.RLock()
+	holder := d.certHolder
+	d.mu.RUnlock()
+	holder.Update(tlsCert)
+	d.logger.Info("Certificate hot-reloaded successfully")
+}
+
+func (d *Daemon) reRegister() {
+	d.logger.Info("Clearing stale registration and re-registering")
+
+	// Tear down old listeners, endpoints, IPs, and hosts under lock
+	d.mu.Lock()
+	if !d.registered && d.operatorID == "" {
+		// Another goroutine already started re-registration
+		d.mu.Unlock()
+		d.logger.Info("Re-registration already in progress, skipping")
+		return
+	}
+	if d.listenerMgr != nil {
+		d.listenerMgr.Close()
+	}
+	for id := range d.endpoints {
+		d.healthServer.UnregisterEndpoint(id)
+	}
+	d.endpoints = make(map[string]socket.EndpointInfo)
+	d.operatorID = ""
+	d.registered = false
+	d.mu.Unlock()
+
+	// These are safe outside d.mu (they have their own locks or no contention)
+	if d.hostsManager != nil {
+		if err := d.hostsManager.RemoveAll(); err != nil {
+			d.logger.Error(err, "Failed to clean /etc/hosts during re-register")
+		}
+	}
+	if d.ipAllocator != nil {
+		d.ipAllocator.ReleaseAll()
+	}
+
+	// Clear stale cert files
+	certDir := d.getCertDir()
+	for _, file := range []string{"operator_id", "tls.crt", "tls.key", "tls.csr"} {
+		os.Remove(filepath.Join(certDir, file))
+	}
+
+	// Re-register (does network calls, must not hold d.mu)
+	if err := d.register(); err != nil {
+		d.logger.Error(err, "Failed to re-register after 404")
+		return
+	}
+
+	// Reinitialize forwarder with new cert
+	if err := d.initializeForwarder(); err != nil {
+		d.logger.Error(err, "Failed to reinitialize forwarder after re-registration")
+		return
+	}
+
+	d.logger.Info("Re-registration complete", "operatorID", d.operatorID)
 }
 
 // Helper methods to get paths from config
@@ -359,6 +651,9 @@ func (d *Daemon) watchConfig() {
 	
 	for {
 		select {
+		case <-d.ctx.Done():
+			d.logger.Info("Config watcher stopped")
+			return
 		case event, ok := <-watcher.Events:
 			if !ok {
 				return
@@ -447,12 +742,8 @@ func (d *Daemon) reloadConfig() {
 			}
 		}
 		
-		// Rebind endpoints (unlock during operations)
 		if len(endpointsToRebind) > 0 {
-			d.mu.Unlock()
 			d.rebindEndpoints(endpointsToRebind)
-			d.mu.Lock()
-			
 			d.logger.Info("✓ Rebinding complete", "count", len(endpointsToRebind))
 		}
 	}
@@ -509,10 +800,9 @@ func (d *Daemon) getListenInterfaceForHostname(hostname string, overrides map[st
 	return defaultInterface
 }
 
+// rebindEndpoints stops and recreates listeners for the given endpoint IDs.
+// Caller must hold d.mu.
 func (d *Daemon) rebindEndpoints(endpointIDs []string) {
-	d.mu.Lock()
-	
-	// Collect endpoint info before stopping
 	endpointsToRecreate := []ngrokapi.Endpoint{}
 	
 	for _, id := range endpointIDs {
@@ -521,23 +811,17 @@ func (d *Daemon) rebindEndpoints(endpointIDs []string) {
 			continue
 		}
 		
-		// Stop existing listener
 		d.listenerMgr.StopListener(id)
 		d.logger.Info("Stopped listener for rebinding", "endpoint", ep.URL)
 		
-		// Remove from tracking
 		delete(d.endpoints, id)
 		
-		// Store endpoint info for recreation
 		endpointsToRecreate = append(endpointsToRecreate, ngrokapi.Endpoint{
 			ID:  ep.ID,
 			URL: ep.URL,
 		})
 	}
 	
-	d.mu.Unlock()
-	
-	// Recreate listeners immediately with new config
 	for _, ep := range endpointsToRecreate {
 		d.logger.Info("Recreating listener with new config", "endpoint", ep.URL)
 		d.addEndpoint(ep)
@@ -650,14 +934,27 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		d.logger.Error(fmt.Errorf("invalid IP"), "Failed to parse allocated IP", "ip", ipStr)
+		d.ipAllocator.ReleaseIP(hostname)
 		return
 	}
 	
 	// Add IP to virtual interface
+	ipAddedToInterface := false
 	if d.netInterface != nil {
 		if err := d.netInterface.AddIP(ip); err != nil {
 			d.logger.Error(err, "Failed to add IP to interface", "ip", ipStr)
 			// Continue anyway - listener may still work
+		} else {
+			ipAddedToInterface = true
+		}
+	}
+	
+	cleanupIP := func() {
+		d.ipAllocator.ReleaseIP(hostname)
+		if ipAddedToInterface && d.netInterface != nil {
+			if err := d.netInterface.RemoveIP(ip); err != nil {
+				d.logger.Error(err, "Failed to remove IP during cleanup", "ip", ipStr)
+			}
 		}
 	}
 	
@@ -680,6 +977,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 			"hostname", hostname,
 			"listen_interface", listenInterface,
 			"available_interfaces", d.listAvailableInterfaces())
+		cleanupIP()
 		return
 	}
 	
@@ -701,6 +999,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 				"hostname", hostname,
 				"listen_interface", listenInterface,
 				"available_interfaces", d.listAvailableInterfaces())
+			cleanupIP()
 			return
 		}
 	}
@@ -785,6 +1084,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		if virtualMode {
 			d.logger.Error(err, "⚠️  Endpoint unavailable - port conflict on unique IP")
 		}
+		cleanupIP()
 		return
 	}
 	
@@ -833,22 +1133,32 @@ func (d *Daemon) removeEndpoint(id string) {
 	if ep, exists := d.endpoints[id]; exists {
 		// Stop listener
 		d.listenerMgr.StopListener(id)
+		d.healthServer.UnregisterEndpoint(id)
 		
-		// Remove IP from interface
-		if d.netInterface != nil {
-			ip := net.ParseIP(ep.IP)
-			if ip != nil {
-				if err := d.netInterface.RemoveIP(ip); err != nil {
-					d.logger.Error(err, "Failed to remove IP from interface", "ip", ep.IP)
-				}
+		// Remove from tracking first so the hostname check below is accurate
+		delete(d.endpoints, id)
+		
+		// Only release IP and remove from interface if no other endpoints
+		// share this hostname (e.g., same host on different ports)
+		hostnameStillInUse := false
+		for _, other := range d.endpoints {
+			if other.Hostname == ep.Hostname {
+				hostnameStillInUse = true
+				break
 			}
 		}
 		
-		// Release IP
-		d.ipAllocator.ReleaseIP(ep.Hostname)
-		
-		// Remove from tracking
-		delete(d.endpoints, id)
+		if !hostnameStillInUse {
+			if d.netInterface != nil {
+				ip := net.ParseIP(ep.IP)
+				if ip != nil {
+					if err := d.netInterface.RemoveIP(ip); err != nil {
+						d.logger.Error(err, "Failed to remove IP from interface", "ip", ep.IP)
+					}
+				}
+			}
+			d.ipAllocator.ReleaseIP(ep.Hostname)
+		}
 		
 		d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP)
 	}
@@ -886,41 +1196,47 @@ func (d *Daemon) ListEndpoints() []socket.EndpointInfo {
 	return result
 }
 
+func (d *Daemon) RefreshCert(force bool) error {
+	d.mu.RLock()
+	registered := d.registered
+	d.mu.RUnlock()
+
+	if !registered {
+		return fmt.Errorf("daemon not registered - set API key first")
+	}
+
+	d.refreshCertWithForce(force)
+	return nil
+}
+
 func (d *Daemon) SetAPIKey(key string) error {
 	d.mu.Lock()
-	
-	// Update in-memory config
 	d.config.API.Key = key
-	
+	d.apiClient = ngrokapi.NewClient(key)
+	alreadyRegistered := d.registered
 	d.mu.Unlock()
 	
-	// Save to config file
+	// Save to config file (no lock needed)
 	if err := d.saveAPIKeyToConfig(key); err != nil {
 		d.logger.Error(err, "Failed to save API key to config file")
 		return fmt.Errorf("failed to save API key to config: %w", err)
 	}
 	
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	
-	// If not registered, register now
-	if !d.registered {
-		d.mu.Unlock() // Unlock before register (it needs lock)
-		if err := d.register(); err != nil {
-			d.mu.Lock()
-			return err
-		}
-		d.mu.Lock()
-		
-		// Initialize forwarder
-		if err := d.initializeForwarder(); err != nil {
-			return err
-		}
-		
-		// Start polling
-		go d.pollingLoop()
+	if alreadyRegistered {
+		return nil
 	}
 	
+	// Registration + init happen unlocked — polling/cert goroutines
+	// that read the fields set here haven't started yet.
+	if err := d.register(); err != nil {
+		return err
+	}
+	if err := d.initializeForwarder(); err != nil {
+		return err
+	}
+	
+	go d.pollingLoop()
+	go d.certRefreshLoop()
 	return nil
 }
 

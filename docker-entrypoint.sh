@@ -16,6 +16,9 @@ server:
   socket_path: /var/run/ngrokd.sock
   client_cert: /etc/ngrokd/tls.crt
   client_key: /etc/ngrokd/tls.key
+  cert_refresh_interval: 3600
+  health_address: "0.0.0.0"
+  health_port: 8081
 
 bound_endpoints:
   poll_interval: 30
@@ -23,7 +26,7 @@ bound_endpoints:
 net:
   interface_name: ngrokd0
   subnet: 10.107.0.0/16
-  listen_interface: "0.0.0.0"  # Default for Docker (use port mappings)
+  listen_interface: "virtual"  # Unique IP per endpoint + /etc/hosts
   start_port: 9080
 EOF
 fi

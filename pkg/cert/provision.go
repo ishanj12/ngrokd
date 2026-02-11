@@ -91,6 +91,69 @@ func (p *Provisioner) SaveCertificate(privateKeyPEM, certPEM []byte) error {
 	return nil
 }
 
+// SaveCSR saves the CSR to disk for future certificate renewal
+func (p *Provisioner) SaveCSR(csrPEM []byte) error {
+	if err := os.MkdirAll(p.certDir, 0700); err != nil {
+		return fmt.Errorf("failed to create cert directory: %w", err)
+	}
+	csrPath := filepath.Join(p.certDir, "tls.csr")
+	return os.WriteFile(csrPath, csrPEM, 0644)
+}
+
+// LoadCSR loads the CSR from disk
+func (p *Provisioner) LoadCSR() ([]byte, error) {
+	csrPath := filepath.Join(p.certDir, "tls.csr")
+	return os.ReadFile(csrPath)
+}
+
+// EnsureCSR loads the CSR from disk, or regenerates it from the existing
+// private key if the CSR file is missing (e.g., upgrade from older version).
+func (p *Provisioner) EnsureCSR() ([]byte, error) {
+	csrPEM, err := p.LoadCSR()
+	if err == nil {
+		return csrPEM, nil
+	}
+
+	keyPath := filepath.Join(p.certDir, "tls.key")
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	block, _ := pem.Decode(keyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode private key PEM")
+	}
+
+	privateKey, err := x509.ParseECPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	template := x509.CertificateRequest{
+		Subject: pkix.Name{
+			Organization: []string{"ngrok-forward-proxy"},
+		},
+		SignatureAlgorithm: x509.ECDSAWithSHA384,
+	}
+
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &template, privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create CSR: %w", err)
+	}
+
+	csrPEM = pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE REQUEST",
+		Bytes: csrDER,
+	})
+
+	if err := p.SaveCSR(csrPEM); err != nil {
+		return nil, fmt.Errorf("failed to save regenerated CSR: %w", err)
+	}
+
+	return csrPEM, nil
+}
+
 // LoadCertificate loads the certificate from disk
 func (p *Provisioner) LoadCertificate() (tls.Certificate, error) {
 	keyPath := filepath.Join(p.certDir, "tls.key")
@@ -123,4 +186,9 @@ func (p *Provisioner) GetKeyPath() string {
 // GetCertPath returns the path to the certificate file
 func (p *Provisioner) GetCertPath() string {
 	return filepath.Join(p.certDir, "tls.crt")
+}
+
+// GetCSRPath returns the path to the CSR file
+func (p *Provisioner) GetCSRPath() string {
+	return filepath.Join(p.certDir, "tls.csr")
 }

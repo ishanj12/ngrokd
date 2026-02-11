@@ -3,7 +3,7 @@
 
 set -e
 
-VERSION="v0.2.0"
+VERSION="v0.3.0"
 DIST_DIR="dist"
 PACKAGES_DIR="dist/packages"
 
@@ -50,7 +50,7 @@ create_package() {
 ngrokd - Forward Proxy Daemon for Kubernetes Bound Endpoints
 ==============================================================
 
-Version: v0.2.0
+Version: v0.3.0
 Platform: ${PLATFORM}-${ARCH}
 
 Quick Install

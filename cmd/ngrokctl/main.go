@@ -64,6 +64,9 @@ func main() {
 			os.Exit(1)
 		}
 		cmdSetAPIKey(os.Args[2])
+	case "refresh-cert":
+		force := len(os.Args) > 2 && os.Args[2] == "--force"
+		cmdRefreshCert(force)
 	case "config":
 		if len(os.Args) < 3 || os.Args[2] != "edit" {
 			fmt.Println("Usage: ngrokctl config edit")
@@ -90,6 +93,8 @@ func printUsage() {
 	fmt.Println("  list                List discovered bound endpoints")
 	fmt.Println("  health              Check daemon health")
 	fmt.Println("  set-api-key <KEY>   Set ngrok API key")
+	fmt.Println("  refresh-cert        Check and renew certificate if expiring")
+	fmt.Println("  refresh-cert --force  Force certificate renewal (bypass expiry check)")
 	fmt.Println("  config edit         Open config file in editor")
 	fmt.Println("  help                Show this help message")
 	fmt.Println()
@@ -287,6 +292,33 @@ func cmdSetAPIKey(apiKey string) {
 	fmt.Println("  3. Start polling for bound endpoints")
 	fmt.Println()
 	fmt.Println("Run 'ngrokctl status' to check registration status")
+}
+
+func cmdRefreshCert(force bool) {
+	args := []string{}
+	if force {
+		args = append(args, "--force")
+	}
+
+	resp, err := sendCommand(Command{
+		Command: "refresh-cert",
+		Args:    args,
+	})
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !resp.Success {
+		fmt.Printf("Error: %s\n", resp.Error)
+		os.Exit(1)
+	}
+
+	var msg string
+	if err := json.Unmarshal(resp.Data, &msg); err != nil {
+		msg = string(resp.Data)
+	}
+	fmt.Printf("✓ %s\n", msg)
 }
 
 func cmdConfigEdit() {

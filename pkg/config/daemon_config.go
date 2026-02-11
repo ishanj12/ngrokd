@@ -24,10 +24,13 @@ type APIConfig struct {
 
 // ServerConfig holds server settings
 type ServerConfig struct {
-	LogLevel   string `yaml:"log_level,omitempty"`
-	SocketPath string `yaml:"socket_path,omitempty"`
-	ClientCert string `yaml:"client_cert,omitempty"`
-	ClientKey  string `yaml:"client_key,omitempty"`
+	LogLevel            string `yaml:"log_level,omitempty"`
+	SocketPath          string `yaml:"socket_path,omitempty"`
+	ClientCert          string `yaml:"client_cert,omitempty"`
+	ClientKey           string `yaml:"client_key,omitempty"`
+	CertRefreshInterval int    `yaml:"cert_refresh_interval,omitempty"`
+	HealthAddress       string `yaml:"health_address,omitempty"`
+	HealthPort          int    `yaml:"health_port,omitempty"`
 }
 
 // BoundEndpointsConfig holds bound endpoint settings
@@ -58,13 +61,13 @@ func LoadDaemonConfig(path string) (*DaemonConfig, error) {
 	}
 
 	// Set defaults
-	cfg.setDefaults()
+	cfg.SetDefaults()
 
 	return &cfg, nil
 }
 
-// setDefaults sets default values
-func (c *DaemonConfig) setDefaults() {
+// SetDefaults sets default values
+func (c *DaemonConfig) SetDefaults() {
 	if c.API.URL == "" {
 		c.API.URL = "https://api.ngrok.com"
 	}
@@ -82,6 +85,15 @@ func (c *DaemonConfig) setDefaults() {
 	}
 	if c.Server.ClientKey == "" {
 		c.Server.ClientKey = getDefaultKeyPath()
+	}
+	if c.Server.CertRefreshInterval == 0 {
+		c.Server.CertRefreshInterval = 3600 // 1 hour
+	}
+	if c.Server.HealthAddress == "" {
+		c.Server.HealthAddress = "127.0.0.1"
+	}
+	if c.Server.HealthPort == 0 {
+		c.Server.HealthPort = 8081
 	}
 	if c.BoundEndpoints.PollInterval == 0 {
 		c.BoundEndpoints.PollInterval = 30

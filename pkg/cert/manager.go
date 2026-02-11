@@ -132,9 +132,13 @@ func (m *Manager) provisionCertificate(ctx context.Context, config Config) (tls.
 		"notBefore", operator.Binding.Cert.NotBefore,
 		"notAfter", operator.Binding.Cert.NotAfter)
 
-	// Step 4: Save certificate and private key to disk
+	// Step 4: Save certificate, private key, and CSR to disk
 	if err := m.provisioner.SaveCertificate(privateKeyPEM, certPEM); err != nil {
 		return tls.Certificate{}, fmt.Errorf("failed to save certificate: %w", err)
+	}
+
+	if err := m.provisioner.SaveCSR(csrPEM); err != nil {
+		m.logger.Info("Failed to save CSR for future renewal", "error", err)
 	}
 
 	m.logger.Info("Certificate saved",
@@ -189,4 +193,9 @@ func (m *Manager) GetIngressEndpoint(ctx context.Context) (string, error) {
 	}
 
 	return "kubernetes-binding-ingress.ngrok.io:443", nil
+}
+
+// LoadCSR loads the stored CSR from disk for certificate renewal
+func (m *Manager) LoadCSR() ([]byte, error) {
+	return m.provisioner.LoadCSR()
 }
