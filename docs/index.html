@@ -58,6 +58,11 @@
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔄</div>
+          <h3>Auto Certificate Renewal</h3>
+          <p>Automatically renews mTLS certificates before expiry. Manual renewal available via CLI.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">♻️</div>
           <h3>Dynamic Reconciliation</h3>
           <p>Endpoints added or removed on-the-fly with automatic listener lifecycle management.</p>
         </div>
@@ -156,15 +161,15 @@
         
         <h3>Download Pre-built Binaries</h3>
         <pre><code># Apple Silicon
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-darwin-arm64.tar.gz
-tar xzf ngrokd-v0.2.0-darwin-arm64.tar.gz
-cd ngrokd-v0.2.0-darwin-arm64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-darwin-arm64.tar.gz
+tar xzf ngrokd-v0.3.0-darwin-arm64.tar.gz
+cd ngrokd-v0.3.0-darwin-arm64
 sudo ./install.sh
 
 # Intel Mac
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-darwin-amd64.tar.gz
-tar xzf ngrokd-v0.2.0-darwin-amd64.tar.gz
-cd ngrokd-v0.2.0-darwin-amd64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-darwin-amd64.tar.gz
+tar xzf ngrokd-v0.3.0-darwin-amd64.tar.gz
+cd ngrokd-v0.3.0-darwin-amd64
 sudo ./install.sh</code></pre>
 
         <h3>Start Daemon</h3>
@@ -189,15 +194,15 @@ curl http://your-endpoint/</code></pre>
         
         <h3>Download Pre-built Binaries</h3>
         <pre><code># AMD64
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-linux-amd64.tar.gz
-tar xzf ngrokd-v0.2.0-linux-amd64.tar.gz
-cd ngrokd-v0.2.0-linux-amd64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-linux-amd64.tar.gz
+tar xzf ngrokd-v0.3.0-linux-amd64.tar.gz
+cd ngrokd-v0.3.0-linux-amd64
 sudo ./install.sh
 
 # ARM64
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-linux-arm64.tar.gz
-tar xzf ngrokd-v0.2.0-linux-arm64.tar.gz
-cd ngrokd-v0.2.0-linux-arm64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-linux-arm64.tar.gz
+tar xzf ngrokd-v0.3.0-linux-arm64.tar.gz
+cd ngrokd-v0.3.0-linux-arm64
 sudo ./install.sh</code></pre>
 
         <h3>Start Daemon</h3>
@@ -238,9 +243,9 @@ curl http://your-endpoint/</code></pre>
         <p><strong>Run PowerShell as Administrator</strong></p>
         
         <p><strong>1. Download and extract:</strong></p>
-        <pre><code>iwr https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-v0.2.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
+        <pre><code>iwr https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
 tar -xzf ngrokd.tar.gz
-cd ngrokd-v0.2.0-windows-amd64</code></pre>
+cd ngrokd-v0.3.0-windows-amd64</code></pre>
 
         <p><strong>2. Install binaries:</strong></p>
         <pre><code># Copy to permanent location
@@ -305,7 +310,7 @@ curl.exe http://your-endpoint/</code></pre>
   -v ngrokd-data:/etc/ngrokd \
   ishanjain8108/ngrokd:latest</code></pre>
         
-        <p style="margin-top: 1rem;"><em><strong>Note:</strong> If NET_ADMIN privileges are not available, remove <code>--cap-add=NET_ADMIN</code> and configure network mode in your config file (<code>listen_interface: "0.0.0.0"</code>).</em></p>
+        <p style="margin-top: 1rem;"><em><strong>Note:</strong> NET_ADMIN is only required for virtual mode (unique IPs). Network mode (<code>listen_interface: "0.0.0.0"</code>) does NOT require NET_ADMIN — simply remove <code>--cap-add=NET_ADMIN</code> and set <code>listen_interface: "0.0.0.0"</code> in your config.</em></p>
 
         <h3>Verify</h3>
         <pre><code># Check status
@@ -509,6 +514,8 @@ docker exec -it ngrokd ngrokctl config edit
     ↓ (resolves via /etc/hosts)
 Unique IP per Endpoint (virtual mode)
     ↓ (daemon listener)
+Host Header Rewrite (rewrites Host to endpoint hostname for compatibility)
+    ↓
 mTLS Connection
     ↓
 kubernetes-binding-ingress.ngrok.io
@@ -587,7 +594,9 @@ Your Backend Service</code></pre>
       <h3>Automatic Features</h3>
       <ul>
         <li><strong>Port Conflict Resolution:</strong> Automatically finds next available port if conflict detected</li>
-        <li><strong>Certificate Management:</strong> Auto-provisions and renews mTLS certificates</li>
+        <li><strong>Certificate Auto-Renewal:</strong> Threshold-based checking renews certificates when remaining lifetime is less than 1/3 of total lifetime</li>
+        <li><strong>Hot Certificate Reload:</strong> Zero-downtime certificate rotation — new certificates are loaded without restarting listeners</li>
+        <li><strong>Operator Recovery:</strong> Automatic re-registration if the operator binding is deleted (404 recovery)</li>
         <li><strong>Hot Reload:</strong> Config changes detected and applied automatically</li>
         <li><strong>State Persistence:</strong> IP and port mappings survive restarts</li>
       </ul>
@@ -660,6 +669,17 @@ curl http://localhost:9080/</code></pre>
       </div>
 
       <div class="card">
+        <h3>Certificate Errors</h3>
+        <p><strong>Symptoms:</strong> Connection failures after long uptime, TLS handshake errors</p>
+        <p><strong>Solutions:</strong></p>
+        <ul>
+          <li>Force certificate renewal: <code>ngrokctl refresh-cert --force</code></li>
+          <li>Check certificate status in logs: <code>tail ~/ngrokd.log | grep cert</code></li>
+          <li>Verify certificate files exist: <code>ls -la /etc/ngrokd/tls.*</code></li>
+        </ul>
+      </div>
+
+      <div class="card">
         <h3>Invalid Interface Name</h3>
         <p><strong>Symptoms:</strong> <code>Config validation failed</code> with interface name</p>
         <p><strong>Solution:</strong> Check available interfaces:</p>
@@ -708,6 +728,14 @@ docker exec ngrokd ip addr show</code></pre>
             <td><code>ngrokctl config edit</code></td>
             <td>Edit configuration file</td>
           </tr>
+          <tr>
+            <td><code>ngrokctl refresh-cert</code></td>
+            <td>Check and renew certificate if expiring</td>
+          </tr>
+          <tr>
+            <td><code>ngrokctl refresh-cert --force</code></td>
+            <td>Force immediate certificate renewal</td>
+          </tr>
         </tbody>
       </table>
     </section>
@@ -726,7 +754,7 @@ docker exec ngrokd ip addr show</code></pre>
 
   <footer>
     <div class="container">
-      <p>ngrokd v0.2.0 | Based on the ngrok Kubernetes Operator connection protocol</p>
+      <p>ngrokd v0.3.0 | Based on the ngrok Kubernetes Operator connection protocol</p>
       <p style="margin-top: 0.5rem;"><a href="https://github.com/ishanj12/ngrokd">GitHub</a> | <a href="https://hub.docker.com/r/ishanjain8108/ngrokd">Docker Hub</a></p>
     </div>
   </footer>
