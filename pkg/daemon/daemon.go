@@ -353,6 +353,23 @@ func (d *Daemon) pollingLoop() {
 func (d *Daemon) pollAndReconcile() bool {
 	d.logger.V(1).Info("Polling for bound endpoints")
 	
+	// If not registered, retry registration instead of polling
+	d.mu.RLock()
+	registered := d.registered
+	d.mu.RUnlock()
+	if !registered {
+		d.logger.Info("Not registered, attempting registration")
+		if err := d.register(); err != nil {
+			d.logger.Error(err, "Registration retry failed")
+			return false
+		}
+		if err := d.initializeForwarder(); err != nil {
+			d.logger.Error(err, "Failed to initialize forwarder after registration retry")
+			return false
+		}
+		d.logger.Info("Registration retry succeeded")
+	}
+
 	ctx := d.ctx
 	d.mu.RLock()
 	client := d.apiClient
