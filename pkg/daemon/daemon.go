@@ -922,7 +922,17 @@ func (d *Daemon) saveNetworkPortMappings(path string) error {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	
-	data, err := json.MarshalIndent(d.networkPortsByHost, "", "  ")
+	// Only persist ports for active endpoints so that deleted endpoints'
+	// ports are freed after a daemon restart.
+	active := make(map[string]int)
+	for _, ep := range d.endpoints {
+		endpointKey := fmt.Sprintf("%s:%d", ep.Hostname, ep.Port)
+		if port, exists := d.networkPortsByHost[endpointKey]; exists {
+			active[endpointKey] = port
+		}
+	}
+	
+	data, err := json.MarshalIndent(active, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -1091,10 +1101,12 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 			listenPort = existingPort
 			d.logger.V(1).Info("Reusing network port", "endpoint_key", endpointKey, "port", existingPort)
 		} else {
-			// Allocate new port
-			listenPort = d.nextPort
+			// Allocate lowest available port starting from StartPort
+			listenPort = d.findLowestAvailablePort()
 			d.networkPortsByHost[endpointKey] = listenPort
-			d.nextPort++
+			if listenPort >= d.nextPort {
+				d.nextPort = listenPort + 1
+			}
 			d.logger.Info("Allocated network port", "endpoint_key", endpointKey, "port", listenPort)
 		}
 	}
@@ -1205,15 +1217,6 @@ func (d *Daemon) removeEndpoint(id string) {
 		// Remove from tracking first so the hostname check below is accurate
 		delete(d.endpoints, id)
 		
-		// Reclaim network port if in network mode
-		if ep.NetworkPort != 0 {
-			endpointKey := fmt.Sprintf("%s:%d", ep.Hostname, ep.Port)
-			if _, exists := d.networkPortsByHost[endpointKey]; exists {
-				delete(d.networkPortsByHost, endpointKey)
-				d.logger.Info("Reclaimed network port", "endpoint_key", endpointKey, "port", ep.NetworkPort)
-			}
-		}
-		
 		// Only release IP and remove from interface if no other endpoints
 		// share this hostname (e.g., same host on different ports)
 		hostnameStillInUse := false
@@ -1237,6 +1240,18 @@ func (d *Daemon) removeEndpoint(id string) {
 		}
 		
 		d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP)
+	}
+}
+
+func (d *Daemon) findLowestAvailablePort() int {
+	usedPorts := make(map[int]bool)
+	for _, p := range d.networkPortsByHost {
+		usedPorts[p] = true
+	}
+	for port := d.config.Net.StartPort; ; port++ {
+		if !usedPorts[port] {
+			return port
+		}
 	}
 }
 

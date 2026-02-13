@@ -17,6 +17,10 @@ func hostRewritingProxy(localConn, ngrokConn net.Conn, targetHost string, target
 
 	peek, err := br.Peek(4)
 	if err != nil {
+		if len(peek) > 0 {
+			combined := &readerConn{Reader: br, Conn: localConn}
+			return rawProxy(combined, ngrokConn)
+		}
 		if err == io.EOF {
 			return nil
 		}
