@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -63,6 +64,10 @@ type Daemon struct {
 	endpoints        map[string]socket.EndpointInfo // endpoint ID -> info
 	nextPort         int                            // For network-accessible mode
 	networkPortsByHost map[string]int               // hostname -> network port (persistent)
+
+	regMu            sync.Mutex // serializes register/reRegister/SetAPIKey
+	shutdownOnce     sync.Once
+	suppressReload   int64      // unix nano timestamp; watcher ignores events within 2s
 }
 
 // New creates a new daemon instance
@@ -198,41 +203,43 @@ func (d *Daemon) Start() error {
 // Shutdown cleanly tears down the daemon, removing all system-level
 // side effects (hosts entries, virtual IPs, listeners, socket file).
 func (d *Daemon) Shutdown() {
-	d.logger.Info("Shutting down daemon")
-	
-	// Cancel context to stop polling, cert refresh, and config watcher
-	d.cancel()
-	
-	// Close all listeners
-	if d.listenerMgr != nil {
-		d.listenerMgr.Close()
-	}
-	
-	// Remove /etc/hosts entries
-	if d.hostsManager != nil {
-		if err := d.hostsManager.RemoveAll(); err != nil {
-			d.logger.Error(err, "Failed to clean up /etc/hosts")
+	d.shutdownOnce.Do(func() {
+		d.logger.Info("Shutting down daemon")
+
+		// Cancel context to stop polling, cert refresh, and config watcher
+		d.cancel()
+
+		// Stop accepting new control-plane commands
+		if d.socketServer != nil {
+			d.socketServer.Stop()
 		}
-	}
-	
-	// Destroy virtual network interface (removes all IPs)
-	if d.netInterface != nil {
-		if err := d.netInterface.Destroy(); err != nil {
-			d.logger.Error(err, "Failed to destroy network interface")
+
+		// Close all listeners
+		if d.listenerMgr != nil {
+			d.listenerMgr.Close()
 		}
-	}
-	
-	// Stop health server
-	if d.healthServer != nil {
-		d.healthServer.Stop(context.Background())
-	}
-	
-	// Stop socket server
-	if d.socketServer != nil {
-		d.socketServer.Stop()
-	}
-	
-	d.logger.Info("Daemon stopped")
+
+		// Remove /etc/hosts entries
+		if d.hostsManager != nil {
+			if err := d.hostsManager.RemoveAll(); err != nil {
+				d.logger.Error(err, "Failed to clean up /etc/hosts")
+			}
+		}
+
+		// Destroy virtual network interface (removes all IPs)
+		if d.netInterface != nil {
+			if err := d.netInterface.Destroy(); err != nil {
+				d.logger.Error(err, "Failed to destroy network interface")
+			}
+		}
+
+		// Stop health server
+		if d.healthServer != nil {
+			d.healthServer.Stop(context.Background())
+		}
+
+		d.logger.Info("Daemon stopped")
+	})
 }
 
 func (d *Daemon) register() error {
@@ -252,8 +259,7 @@ func (d *Daemon) register() error {
 		Logger:      d.logger,
 	})
 	
-	ctx := context.Background()
-	_, err := d.certManager.EnsureCertificate(ctx, cert.Config{
+	_, err := d.certManager.EnsureCertificate(d.ctx, cert.Config{
 		CertDir:     certDir,
 		APIKey:      d.config.API.Key,
 		Description: "ngrokd daemon",
@@ -359,15 +365,28 @@ func (d *Daemon) pollAndReconcile() bool {
 	d.mu.RUnlock()
 	if !registered {
 		d.logger.Info("Not registered, attempting registration")
-		if err := d.register(); err != nil {
-			d.logger.Error(err, "Registration retry failed")
-			return false
+		d.regMu.Lock()
+		// Re-check under regMu
+		d.mu.RLock()
+		if d.registered {
+			d.mu.RUnlock()
+			d.regMu.Unlock()
+			// Another path completed registration
+		} else {
+			d.mu.RUnlock()
+			if err := d.register(); err != nil {
+				d.regMu.Unlock()
+				d.logger.Error(err, "Registration retry failed")
+				return false
+			}
+			if err := d.initializeForwarder(); err != nil {
+				d.regMu.Unlock()
+				d.logger.Error(err, "Failed to initialize forwarder after registration retry")
+				return false
+			}
+			d.regMu.Unlock()
+			d.logger.Info("Registration retry succeeded")
 		}
-		if err := d.initializeForwarder(); err != nil {
-			d.logger.Error(err, "Failed to initialize forwarder after registration retry")
-			return false
-		}
-		d.logger.Info("Registration retry succeeded")
 	}
 
 	ctx := d.ctx
@@ -557,11 +576,19 @@ func (d *Daemon) refreshCertWithForce(force bool) {
 	d.mu.RLock()
 	holder := d.certHolder
 	d.mu.RUnlock()
+	if holder == nil {
+		d.logger.Error(nil, "Cannot hot-reload cert - certHolder not initialized")
+		return
+	}
 	holder.Update(tlsCert)
 	d.logger.Info("Certificate hot-reloaded successfully")
 }
 
 func (d *Daemon) reRegister() {
+	// Serialize all registration operations
+	d.regMu.Lock()
+	defer d.regMu.Unlock()
+
 	d.logger.Info("Clearing stale registration and re-registering")
 
 	// Tear down old listeners, endpoints, IPs, and hosts under lock
@@ -665,11 +692,17 @@ func (d *Daemon) watchConfig() {
 	}
 	
 	d.logger.Info("Watching config file for changes", "path", d.configPath)
+
+	// Debounce timer — coalesces rapid events into a single reload
+	var debounce *time.Timer
 	
 	for {
 		select {
 		case <-d.ctx.Done():
 			d.logger.Info("Config watcher stopped")
+			if debounce != nil {
+				debounce.Stop()
+			}
 			return
 		case event, ok := <-watcher.Events:
 			if !ok {
@@ -683,10 +716,21 @@ func (d *Daemon) watchConfig() {
 			
 			// Config file modified or created (from rename)
 			if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Create == fsnotify.Create {
-				d.logger.Info("Config file changed, reloading...", "path", event.Name)
-				// Small delay to ensure file is fully written
-				time.Sleep(100 * time.Millisecond)
-				d.reloadConfig()
+				// Skip if this is our own write (saveAPIKeyToConfig)
+				suppressed := atomic.LoadInt64(&d.suppressReload)
+				if suppressed > 0 && time.Since(time.Unix(0, suppressed)) < 2*time.Second {
+					d.logger.V(1).Info("Ignoring config change from self-write")
+					continue
+				}
+
+				// Debounce: reset timer on each event, reload after 500ms quiet
+				if debounce != nil {
+					debounce.Stop()
+				}
+				debounce = time.AfterFunc(500*time.Millisecond, func() {
+					d.logger.Info("Config file changed, reloading...", "path", event.Name)
+					d.reloadConfig()
+				})
 			}
 			
 		case err, ok := <-watcher.Errors:
@@ -934,6 +978,11 @@ func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
 }
 
 func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
+	if d.listenerMgr == nil {
+		d.logger.Error(nil, "Cannot add endpoint - forwarder not initialized", "url", ep.URL)
+		return
+	}
+
 	// Parse hostname and port from URL
 	hostname, port, err := ipalloc.ParseHostname(ep.URL)
 	if err != nil {
@@ -1059,13 +1108,12 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		LocalAddress: listenAddr,
 	}
 	
-	ctx := context.Background()
 	localListenerOK := true
 	networkPort := 0
 	maxRetries := 20
 	
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := d.listenerMgr.StartListener(ctx, endpoint)
+		err := d.listenerMgr.StartListener(d.ctx, endpoint)
 		if err == nil {
 			// Success!
 			break
@@ -1149,11 +1197,22 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 func (d *Daemon) removeEndpoint(id string) {
 	if ep, exists := d.endpoints[id]; exists {
 		// Stop listener
-		d.listenerMgr.StopListener(id)
+		if d.listenerMgr != nil {
+			d.listenerMgr.StopListener(id)
+		}
 		d.healthServer.UnregisterEndpoint(id)
 		
 		// Remove from tracking first so the hostname check below is accurate
 		delete(d.endpoints, id)
+		
+		// Reclaim network port if in network mode
+		if ep.NetworkPort != 0 {
+			endpointKey := fmt.Sprintf("%s:%d", ep.Hostname, ep.Port)
+			if _, exists := d.networkPortsByHost[endpointKey]; exists {
+				delete(d.networkPortsByHost, endpointKey)
+				d.logger.Info("Reclaimed network port", "endpoint_key", endpointKey, "port", ep.NetworkPort)
+			}
+		}
 		
 		// Only release IP and remove from interface if no other endpoints
 		// share this hostname (e.g., same host on different ports)
@@ -1183,9 +1242,15 @@ func (d *Daemon) removeEndpoint(id string) {
 
 func (d *Daemon) updateHosts() {
 	mappings := d.ipAllocator.GetAllMappings()
-	if err := d.hostsManager.UpdateHosts(mappings); err != nil {
-		d.logger.Error(err, "Failed to update /etc/hosts")
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := d.hostsManager.UpdateHosts(mappings); err != nil {
+			d.logger.Error(err, "Failed to update /etc/hosts", "attempt", attempt+1)
+			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+			continue
+		}
+		return
 	}
+	d.logger.Error(nil, "/etc/hosts update failed after 3 attempts")
 }
 
 // Socket command implementations
@@ -1243,8 +1308,18 @@ func (d *Daemon) SetAPIKey(key string) error {
 		return nil
 	}
 	
-	// Registration + init happen unlocked — polling/cert goroutines
-	// that read the fields set here haven't started yet.
+	// Serialize with reRegister to prevent concurrent operator creation
+	d.regMu.Lock()
+	defer d.regMu.Unlock()
+
+	// Re-check under regMu in case reRegister ran between our check and lock
+	d.mu.RLock()
+	if d.registered {
+		d.mu.RUnlock()
+		return nil
+	}
+	d.mu.RUnlock()
+
 	if err := d.register(); err != nil {
 		return err
 	}
@@ -1279,6 +1354,9 @@ func (d *Daemon) saveAPIKeyToConfig(apiKey string) error {
 		return err
 	}
 	
+	// Suppress config watcher from reloading our own write
+	atomic.StoreInt64(&d.suppressReload, time.Now().UnixNano())
+
 	// Write atomically (temp + rename)
 	tempPath := d.configPath + ".tmp"
 	if err := os.WriteFile(tempPath, updatedData, 0600); err != nil {

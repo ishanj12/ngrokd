@@ -16,7 +16,13 @@ func hostRewritingProxy(localConn, ngrokConn net.Conn, targetHost string, target
 	br := bufio.NewReader(localConn)
 
 	peek, err := br.Peek(4)
-	if err != nil || !looksLikeHTTP(peek) {
+	if err != nil {
+		if err == io.EOF {
+			return nil
+		}
+		return err
+	}
+	if !looksLikeHTTP(peek) {
 		combined := &readerConn{Reader: br, Conn: localConn}
 		return rawProxy(combined, ngrokConn)
 	}
@@ -26,39 +32,41 @@ func hostRewritingProxy(localConn, ngrokConn net.Conn, targetHost string, target
 		hostVal = fmt.Sprintf("%s:%d", targetHost, targetPort)
 	}
 
-	errChan := make(chan error, 2)
+	errs := make(chan error, 2)
 
-	// localConn → ngrokConn: parse each HTTP request, rewrite Host, write
 	go func() {
 		bw := bufio.NewWriter(ngrokConn)
 		for {
 			req, err := http.ReadRequest(br)
 			if err != nil {
-				errChan <- err
+				errs <- err
 				return
 			}
 			req.Host = hostVal
 			req.Header.Set("Host", hostVal)
-			err = req.Write(bw)
+			writeErr := req.Write(bw)
 			req.Body.Close()
-			if err != nil {
-				errChan <- err
+			if writeErr != nil {
+				errs <- writeErr
 				return
 			}
 			if err := bw.Flush(); err != nil {
-				errChan <- err
+				errs <- err
 				return
 			}
 		}
 	}()
 
-	// ngrokConn → localConn: raw copy (responses don't need rewriting)
 	go func() {
 		_, err := io.Copy(localConn, ngrokConn)
-		errChan <- err
+		errs <- err
 	}()
 
-	return <-errChan
+	err = <-errs
+	if err == io.EOF {
+		err = nil
+	}
+	return err
 }
 
 func looksLikeHTTP(b []byte) bool {
@@ -82,17 +90,21 @@ func (r *readerConn) Read(p []byte) (int, error) {
 }
 
 func rawProxy(localConn, ngrokConn net.Conn) error {
-	errChan := make(chan error, 2)
+	errs := make(chan error, 2)
 
 	go func() {
 		_, err := io.Copy(ngrokConn, localConn)
-		errChan <- err
+		errs <- err
 	}()
 
 	go func() {
 		_, err := io.Copy(localConn, ngrokConn)
-		errChan <- err
+		errs <- err
 	}()
 
-	return <-errChan
+	err := <-errs
+	if err == io.EOF {
+		err = nil
+	}
+	return err
 }

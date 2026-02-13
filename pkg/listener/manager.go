@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
@@ -137,6 +138,7 @@ func (m *Manager) acceptConnections(ctx context.Context, active *activeListener)
 
 			m.logger.Error(err, "failed to accept connection",
 				"endpoint", active.endpoint.Name)
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
@@ -159,7 +161,7 @@ func (m *Manager) acceptConnections(ctx context.Context, active *activeListener)
 				}
 			}()
 
-			if err := m.forwarder.ForwardConnection(c, active.endpoint); err != nil {
+			if err := m.forwarder.ForwardConnection(ctx, c, active.endpoint); err != nil {
 				m.logger.Error(err, "failed to forward connection",
 					"endpoint", active.endpoint.Name)
 				if m.statusCallback != nil {

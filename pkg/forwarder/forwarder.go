@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -60,7 +61,7 @@ func New(config Config) (*Forwarder, error) {
 	}
 
 	if config.DialTimeout == 0 {
-		config.DialTimeout = 3 * time.Minute
+		config.DialTimeout = 15 * time.Second
 	}
 
 	// Load system root CAs
@@ -106,7 +107,7 @@ func New(config Config) (*Forwarder, error) {
 }
 
 // ForwardConnection forwards a single connection to the specified bound endpoint
-func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint) error {
+func (f *Forwarder) ForwardConnection(ctx context.Context, localConn net.Conn, endpoint BoundEndpoint) error {
 	// Silently forward - verbose logging only
 	f.logger.V(1).Info("forwarding connection",
 		"endpoint", endpoint.Name,
@@ -142,7 +143,7 @@ func (f *Forwarder) ForwardConnection(localConn net.Conn, endpoint BoundEndpoint
 		Config:    tlsConfig,
 	}
 	
-	ngrokConn, err := dialer.Dial("tcp", f.config.IngressEndpoint)
+	ngrokConn, err := dialer.DialContext(ctx, "tcp", f.config.IngressEndpoint)
 	if err != nil {
 		return fmt.Errorf("failed to dial ingress endpoint %s: %w", f.config.IngressEndpoint, err)
 	}
