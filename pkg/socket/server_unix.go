@@ -18,8 +18,8 @@ func (s *Server) createListener() (net.Listener, error) {
 		return nil, fmt.Errorf("failed to create unix socket: %w", err)
 	}
 	
-	// Set permissions (owner-only for security - CLI must run as same user/root)
-	if err := os.Chmod(s.socketPath, 0600); err != nil {
+	// Set permissions (readable/writable by all for easier CLI access)
+	if err := os.Chmod(s.socketPath, 0666); err != nil {
 		s.logger.Error(err, "Failed to set socket permissions")
 	}
 	
