@@ -288,22 +288,26 @@ func (a *Allocator) LoadPersistentMappings(path string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	
-	a.allocated = mappings
-	
-	// Update nextIP to avoid conflicts
-	// Find the highest allocated IP and increment from there
+	// Only load mappings whose IPs are within the current subnet.
+	// This handles subnet changes (e.g. macOS override to 127.0.0.0/8).
 	var maxIP net.IP
-	for _, ipStr := range mappings {
+	loaded := 0
+	for hostname, ipStr := range mappings {
 		ip := net.ParseIP(ipStr)
-		if ip != nil {
-			// Convert to 4-byte for proper comparison
-			ip4 := ip.To4()
-			if ip4 != nil && a.subnet.Contains(ip4) {
-				if maxIP == nil || compareIP(ip4, maxIP) > 0 {
-					maxIP = make(net.IP, len(ip4))
-					copy(maxIP, ip4)
-				}
-			}
+		if ip == nil {
+			continue
+		}
+		ip4 := ip.To4()
+		if ip4 == nil || !a.subnet.Contains(ip4) {
+			a.logger.Info("Skipping persistent mapping outside current subnet",
+				"hostname", hostname, "ip", ipStr)
+			continue
+		}
+		a.allocated[hostname] = ipStr
+		loaded++
+		if maxIP == nil || compareIP(ip4, maxIP) > 0 {
+			maxIP = make(net.IP, len(ip4))
+			copy(maxIP, ip4)
 		}
 	}
 	
@@ -313,7 +317,7 @@ func (a *Allocator) LoadPersistentMappings(path string) error {
 		a.logger.Info("Resuming IP allocation from", "nextIP", maxIP.String())
 	}
 	
-	a.logger.Info("Loaded persistent IP mappings", "count", len(mappings))
+	a.logger.Info("Loaded persistent IP mappings", "count", loaded)
 	return nil
 }
 
