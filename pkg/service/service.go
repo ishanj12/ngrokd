@@ -8,6 +8,7 @@ import (
 
 const (
 	binaryName    = "ngrokd"
+	ctlBinaryName = "ngrokctl"
 	installDir    = "/usr/local/bin"
 	configPath    = "/etc/ngrokd/config.yml"
 	serviceName   = "com.ngrokd.daemon"
@@ -31,16 +32,16 @@ func Install() error {
 		return err
 	}
 
-	dst := InstalledBinaryPath()
+	if err := os.MkdirAll(installDir, 0755); err != nil {
+		return fmt.Errorf("failed to create install dir: %w", err)
+	}
 
-	// Copy binary to install dir if not already there
+	// Install ngrokd
+	dst := InstalledBinaryPath()
 	if src != dst {
 		data, err := os.ReadFile(src)
 		if err != nil {
 			return fmt.Errorf("failed to read binary: %w", err)
-		}
-		if err := os.MkdirAll(installDir, 0755); err != nil {
-			return fmt.Errorf("failed to create install dir: %w", err)
 		}
 		if err := os.WriteFile(dst, data, 0755); err != nil {
 			return fmt.Errorf("failed to install binary: %w", err)
@@ -48,6 +49,17 @@ func Install() error {
 		fmt.Printf("✓ Installed %s → %s\n", binaryName, dst)
 	} else {
 		fmt.Printf("✓ Binary already at %s\n", dst)
+	}
+
+	// Install ngrokctl if it exists alongside ngrokd
+	ctlSrc := filepath.Join(filepath.Dir(src), ctlBinaryName)
+	ctlDst := filepath.Join(installDir, ctlBinaryName)
+	if ctlSrc != ctlDst {
+		if data, err := os.ReadFile(ctlSrc); err == nil {
+			if err := os.WriteFile(ctlDst, data, 0755); err == nil {
+				fmt.Printf("✓ Installed %s → %s\n", ctlBinaryName, ctlDst)
+			}
+		}
 	}
 
 	if err := installService(); err != nil {
