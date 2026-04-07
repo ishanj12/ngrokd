@@ -24,8 +24,9 @@ type Manager struct {
 	logger         logr.Logger
 	statusCallback StatusCallback
 
-	mu        sync.RWMutex
-	listeners map[string]*activeListener // key: endpoint name
+	mu              sync.RWMutex
+	listeners       map[string]*activeListener  // key: endpoint name (dedicated)
+	sharedListeners map[string]*sharedListener  // key: shared listener key (e.g. "wildcard:example.com:443")
 }
 
 type activeListener struct {
@@ -185,7 +186,7 @@ func (m *Manager) ListActiveEndpoints() []string {
 	return endpoints
 }
 
-// Close stops all listeners
+// Close stops all listeners (dedicated and shared)
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -196,6 +197,12 @@ func (m *Manager) Close() error {
 		active.cancel()
 		active.listener.Close()
 		delete(m.listeners, name)
+	}
+
+	for key, sl := range m.sharedListeners {
+		sl.cancel()
+		sl.listener.Close()
+		delete(m.sharedListeners, key)
 	}
 
 	return nil

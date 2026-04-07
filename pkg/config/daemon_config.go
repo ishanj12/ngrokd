@@ -14,6 +14,7 @@ type DaemonConfig struct {
 	Server          ServerConfig          `yaml:"server"`
 	BoundEndpoints  BoundEndpointsConfig  `yaml:"bound_endpoints"`
 	Net             NetConfig             `yaml:"net"`
+	DNS             DNSConfig             `yaml:"dns"`
 }
 
 // APIConfig holds ngrok API settings
@@ -46,6 +47,14 @@ type NetConfig struct {
 	ListenInterface string            `yaml:"listen_interface,omitempty"` // Default: "virtual", "0.0.0.0", or specific IP
 	StartPort       int               `yaml:"start_port,omitempty"`       // Starting port for non-virtual modes
 	Overrides       map[string]string `yaml:"overrides,omitempty"`        // hostname -> listen_interface override
+}
+
+// DNSConfig holds DNS resolver settings
+type DNSConfig struct {
+	Enabled          bool     `yaml:"enabled,omitempty"`
+	Listen           string   `yaml:"listen,omitempty"`           // Listen address (default: "127.0.0.1:53", auto-fallback to 127.0.0.2:53 etc.)
+	ManageResolvConf bool     `yaml:"manage_resolv_conf,omitempty"`
+	Upstream         []string `yaml:"upstream,omitempty"` // Auto-detected from /etc/resolv.conf if empty
 }
 
 // LoadDaemonConfig loads daemon configuration from file

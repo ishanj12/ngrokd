@@ -13,13 +13,14 @@ import (
 
 // Allocator manages IP address allocation from a subnet
 type Allocator struct {
-	subnet       *net.IPNet
-	nextIP       net.IP
-	allocated    map[string]string      // hostname -> IP (for backwards compat)
-	portsByIP    map[string]map[int]bool // IP -> set of ports in use
-	hostnameByIP map[string][]string    // IP -> hostnames using it
-	mu           sync.RWMutex
-	logger       logr.Logger
+	subnet          *net.IPNet
+	nextIP          net.IP
+	allocated       map[string]string      // hostname -> IP (for backwards compat)
+	portsByIP       map[string]map[int]bool // IP -> set of ports in use
+	hostnameByIP    map[string][]string    // IP -> hostnames using it
+	portsByHostname map[string]map[int]bool // hostname -> set of ports active
+	mu              sync.RWMutex
+	logger          logr.Logger
 }
 
 // NewAllocator creates a new IP allocator
@@ -37,12 +38,13 @@ func NewAllocator(subnet string, logger logr.Logger) *Allocator {
 	startIP[len(startIP)-1] = 2
 	
 	return &Allocator{
-		subnet:       ipnet,
-		nextIP:       startIP,
-		allocated:    make(map[string]string),
-		portsByIP:    make(map[string]map[int]bool),
-		hostnameByIP: make(map[string][]string),
-		logger:       logger,
+		subnet:          ipnet,
+		nextIP:          startIP,
+		allocated:       make(map[string]string),
+		portsByIP:       make(map[string]map[int]bool),
+		hostnameByIP:    make(map[string][]string),
+		portsByHostname: make(map[string]map[int]bool),
+		logger:          logger,
 	}
 }
 
@@ -59,6 +61,10 @@ func (a *Allocator) AllocateIPForPort(hostname string, port int) (string, error)
 			a.portsByIP[ip] = make(map[int]bool)
 		}
 		a.portsByIP[ip][port] = true
+		if a.portsByHostname[hostname] == nil {
+			a.portsByHostname[hostname] = make(map[int]bool)
+		}
+		a.portsByHostname[hostname][port] = true
 		return ip, nil
 	}
 	
@@ -69,6 +75,10 @@ func (a *Allocator) AllocateIPForPort(hostname string, port int) (string, error)
 			a.allocated[hostname] = ip
 			a.portsByIP[ip][port] = true
 			a.hostnameByIP[ip] = append(a.hostnameByIP[ip], hostname)
+			if a.portsByHostname[hostname] == nil {
+				a.portsByHostname[hostname] = make(map[int]bool)
+			}
+			a.portsByHostname[hostname][port] = true
 			
 			a.logger.Info("Reused IP with different port", 
 				"hostname", hostname, 
@@ -104,6 +114,10 @@ func (a *Allocator) AllocateIPForPort(hostname string, port int) (string, error)
 			}
 			a.portsByIP[ipStr][port] = true
 			a.hostnameByIP[ipStr] = []string{hostname}
+			if a.portsByHostname[hostname] == nil {
+				a.portsByHostname[hostname] = make(map[int]bool)
+			}
+			a.portsByHostname[hostname][port] = true
 			
 			// Increment for next allocation
 			incrementIP(ip)
@@ -160,6 +174,57 @@ func (a *Allocator) GetAllMappings() map[string]string {
 	return result
 }
 
+// ReleaseIPForPort releases a single port for a hostname.
+// Returns the IP that was allocated and whether the IP was fully freed.
+func (a *Allocator) ReleaseIPForPort(hostname string, port int) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	ip, exists := a.allocated[hostname]
+	if !exists {
+		return "", false
+	}
+
+	// Remove this port from hostname's port set
+	if ports, ok := a.portsByHostname[hostname]; ok {
+		delete(ports, port)
+		if len(ports) > 0 {
+			// Hostname still has other ports active - keep the IP allocation
+			// Also remove port from the IP's port tracking
+			if ipPorts, ok := a.portsByIP[ip]; ok {
+				delete(ipPorts, port)
+			}
+			a.logger.Info("Released port for hostname (other ports still active)",
+				"hostname", hostname, "port", port, "ip", ip)
+			return ip, false
+		}
+	}
+	delete(a.portsByHostname, hostname)
+
+	// No ports left for this hostname - release the hostname→IP mapping
+	delete(a.allocated, hostname)
+
+	// Remove hostname from IP's hostname list
+	if hostnames, ok := a.hostnameByIP[ip]; ok {
+		filtered := []string{}
+		for _, h := range hostnames {
+			if h != hostname {
+				filtered = append(filtered, h)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(a.hostnameByIP, ip)
+			delete(a.portsByIP, ip)
+			a.logger.Info("Released IP completely", "hostname", hostname, "ip", ip, "port", port)
+			return ip, true
+		}
+		a.hostnameByIP[ip] = filtered
+	}
+
+	a.logger.Info("Released hostname from IP", "hostname", hostname, "ip", ip, "port", port)
+	return ip, false
+}
+
 // ReleaseIP releases an IP allocation for a hostname
 func (a *Allocator) ReleaseIP(hostname string) {
 	a.mu.Lock()
@@ -171,6 +236,7 @@ func (a *Allocator) ReleaseIP(hostname string) {
 	}
 	
 	delete(a.allocated, hostname)
+	delete(a.portsByHostname, hostname)
 	
 	// Remove from hostname tracking
 	if hostnames, ok := a.hostnameByIP[ip]; ok {
@@ -181,7 +247,6 @@ func (a *Allocator) ReleaseIP(hostname string) {
 			}
 		}
 		if len(filtered) == 0 {
-			// No more hostnames using this IP - clean up completely
 			delete(a.hostnameByIP, ip)
 			delete(a.portsByIP, ip)
 		} else {
@@ -200,6 +265,7 @@ func (a *Allocator) ReleaseAll() {
 	a.allocated = make(map[string]string)
 	a.portsByIP = make(map[string]map[int]bool)
 	a.hostnameByIP = make(map[string][]string)
+	a.portsByHostname = make(map[string]map[int]bool)
 
 	a.logger.Info("Released all IP allocations")
 }
@@ -285,6 +351,26 @@ func (a *Allocator) SavePersistentMappings(path string) error {
 	}
 	
 	return os.Rename(tempPath, path)
+}
+
+// IsWildcard returns true if the hostname is a wildcard (e.g. "*.example.com").
+func IsWildcard(hostname string) bool {
+	return strings.HasPrefix(hostname, "*.")
+}
+
+// WildcardSuffix extracts the suffix from a wildcard hostname.
+// "*.example.com" → "example.com". Returns "" if not a wildcard.
+func WildcardSuffix(hostname string) string {
+	if !IsWildcard(hostname) {
+		return ""
+	}
+	return hostname[2:]
+}
+
+// WildcardAllocatorKey returns the synthetic key used for IP allocation
+// of wildcard endpoints. e.g. "wildcard:example.com"
+func WildcardAllocatorKey(suffix string) string {
+	return "wildcard:" + suffix
 }
 
 // ParseHostname extracts hostname from endpoint URI

@@ -45,6 +45,7 @@ type BoundEndpoint struct {
 	Port         int
 	LocalPort    int
 	LocalAddress string
+	RequestedHost string // Original hostname from SNI/Host header (for wildcard/router routing)
 }
 
 // Forwarder handles forwarding traffic from local connections to ngrok bound endpoints
@@ -151,10 +152,17 @@ func (f *Forwarder) ForwardConnection(ctx context.Context, localConn net.Conn, e
 
 	f.logger.V(1).Info("mTLS connection established", "endpoint", f.config.IngressEndpoint)
 
-	// Step 2: Parse endpoint URI to extract host
-	host, err := extractHost(endpoint.URI)
-	if err != nil {
-		return fmt.Errorf("failed to parse endpoint URI: %w", err)
+	// Step 2: Determine the host for the binding protocol upgrade.
+	// Use RequestedHost (from SNI/Host header) if set (wildcard/router),
+	// otherwise extract from the endpoint URI (static endpoints).
+	var host string
+	if endpoint.RequestedHost != "" {
+		host = endpoint.RequestedHost
+	} else {
+		host, err = extractHost(endpoint.URI)
+		if err != nil {
+			return fmt.Errorf("failed to parse endpoint URI: %w", err)
+		}
 	}
 
 	f.logger.V(1).Info("upgrading connection", "host", host, "port", endpoint.Port)

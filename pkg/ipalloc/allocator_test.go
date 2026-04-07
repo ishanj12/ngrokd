@@ -115,6 +115,95 @@ func TestAllocator_SaveLoadPersistentMappings(t *testing.T) {
 	}
 }
 
+func TestAllocator_ReleaseIPForPort_PartialRelease(t *testing.T) {
+	a := NewAllocator("10.107.0.0/16", logr.Discard())
+	ip1, err := a.AllocateIPForPort("host1", 80)
+	if err != nil {
+		t.Fatalf("alloc port 80: %v", err)
+	}
+	ip2, err := a.AllocateIPForPort("host1", 443)
+	if err != nil {
+		t.Fatalf("alloc port 443: %v", err)
+	}
+	if ip1 != ip2 {
+		t.Fatalf("expected same IP for same hostname, got %s and %s", ip1, ip2)
+	}
+
+	// Release port 80 — IP should NOT be freed
+	_, ipFreed := a.ReleaseIPForPort("host1", 80)
+	if ipFreed {
+		t.Fatal("IP should not be freed when port 443 is still active")
+	}
+	mappings := a.GetAllMappings()
+	if _, exists := mappings["host1"]; !exists {
+		t.Fatal("host1 mapping should still exist after partial release")
+	}
+
+	// Release port 443 — IP should be freed
+	_, ipFreed = a.ReleaseIPForPort("host1", 443)
+	if !ipFreed {
+		t.Fatal("IP should be freed when all ports are released")
+	}
+	mappings = a.GetAllMappings()
+	if _, exists := mappings["host1"]; exists {
+		t.Fatal("host1 mapping should not exist after full release")
+	}
+}
+
+func TestAllocator_ReleaseIPForPort_SinglePort(t *testing.T) {
+	a := NewAllocator("10.107.0.0/16", logr.Discard())
+	_, err := a.AllocateIPForPort("host1", 80)
+	if err != nil {
+		t.Fatalf("alloc: %v", err)
+	}
+	_, ipFreed := a.ReleaseIPForPort("host1", 80)
+	if !ipFreed {
+		t.Fatal("IP should be freed when single port is released")
+	}
+	mappings := a.GetAllMappings()
+	if _, exists := mappings["host1"]; exists {
+		t.Fatal("host1 should not be in mappings after release")
+	}
+}
+
+func TestAllocator_ReleaseIPForPort_NonExistent(t *testing.T) {
+	a := NewAllocator("10.107.0.0/16", logr.Discard())
+	ip, ipFreed := a.ReleaseIPForPort("nonexistent", 80)
+	if ip != "" {
+		t.Fatalf("expected empty IP, got %s", ip)
+	}
+	if ipFreed {
+		t.Fatal("expected ipFreed=false for nonexistent hostname")
+	}
+}
+
+func TestAllocator_CleanupDoesNotBreakSiblingPorts(t *testing.T) {
+	a := NewAllocator("10.107.0.0/16", logr.Discard())
+	ip1, err := a.AllocateIPForPort("host1", 80)
+	if err != nil {
+		t.Fatalf("alloc port 80: %v", err)
+	}
+	ip2, err := a.AllocateIPForPort("host1", 443)
+	if err != nil {
+		t.Fatalf("alloc port 443: %v", err)
+	}
+	if ip1 != ip2 {
+		t.Fatalf("expected same IP, got %s and %s", ip1, ip2)
+	}
+
+	// Release port 80
+	a.ReleaseIPForPort("host1", 80)
+
+	// Re-allocate port 80 — should get the same IP back
+	ip3, err := a.AllocateIPForPort("host1", 80)
+	if err != nil {
+		t.Fatalf("re-alloc port 80: %v", err)
+	}
+	if ip3 != ip1 {
+		t.Fatalf("expected same IP %s after re-alloc, got %s", ip1, ip3)
+	}
+}
+
 func TestParseHostname(t *testing.T) {
 	tests := []struct {
 		input    string

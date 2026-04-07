@@ -49,6 +49,9 @@ type EndpointInfo struct {
 	LocalListener   bool   `json:"local_listener"`    // True if listener is active
 	NetworkPort     int    `json:"network_port"`      // Network port if not virtual
 	ListenInterface string `json:"listen_interface"`  // "virtual", "0.0.0.0", or specific IP
+	Wildcard          bool   `json:"wildcard"`            // True if this is a wildcard endpoint
+	WildcardSuffix    string `json:"wildcard_suffix"`     // e.g. "example.com" for *.example.com
+	SharedListenerKey string `json:"shared_listener_key"` // Non-empty if using a shared SNI-routed listener
 }
 
 // Server handles unix socket communication

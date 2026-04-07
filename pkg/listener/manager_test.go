@@ -15,6 +15,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
 )
 
 func newTestManager(t *testing.T) *Manager {
@@ -157,5 +158,123 @@ func TestManager_CloseAll(t *testing.T) {
 	active = mgr.ListActiveEndpoints()
 	if len(active) != 0 {
 		t.Fatalf("expected empty after Close(), got %v", active)
+	}
+}
+
+// --- Shared listener tests ---
+
+func TestManager_StartSharedListener(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	tbl := routing.NewTable()
+
+	created, err := mgr.StartSharedListener(context.Background(), "wildcard:example.com:443", "127.0.0.1", 19990, tbl)
+	if err != nil {
+		t.Fatalf("StartSharedListener error: %v", err)
+	}
+	if !created {
+		t.Fatal("expected new listener to be created")
+	}
+
+	if !mgr.HasSharedListener("wildcard:example.com:443") {
+		t.Fatal("expected HasSharedListener to return true")
+	}
+}
+
+func TestManager_StartSharedListenerDuplicate(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	tbl := routing.NewTable()
+
+	created, err := mgr.StartSharedListener(context.Background(), "wildcard:test.com:443", "127.0.0.1", 19989, tbl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected created=true")
+	}
+
+	created, err = mgr.StartSharedListener(context.Background(), "wildcard:test.com:443", "127.0.0.1", 19989, tbl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("expected created=false for duplicate key")
+	}
+}
+
+func TestManager_SharedEndpointLifecycle(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	tbl := routing.NewTable()
+
+	_, err := mgr.StartSharedListener(context.Background(), "wildcard:lc.test:443", "127.0.0.1", 19988, tbl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr.AddSharedEndpoint("wildcard:lc.test:443", "ep-1")
+	mgr.AddSharedEndpoint("wildcard:lc.test:443", "ep-2")
+
+	// Removing first endpoint should not stop the listener
+	stopped := mgr.RemoveSharedEndpoint("wildcard:lc.test:443", "ep-1")
+	if stopped {
+		t.Fatal("expected listener to stay alive with ep-2 remaining")
+	}
+	if !mgr.HasSharedListener("wildcard:lc.test:443") {
+		t.Fatal("listener should still exist")
+	}
+
+	// Removing last endpoint should stop the listener
+	stopped = mgr.RemoveSharedEndpoint("wildcard:lc.test:443", "ep-2")
+	if !stopped {
+		t.Fatal("expected listener to be stopped when last endpoint removed")
+	}
+	if mgr.HasSharedListener("wildcard:lc.test:443") {
+		t.Fatal("listener should be gone")
+	}
+}
+
+func TestManager_CloseIncludesSharedListeners(t *testing.T) {
+	mgr := newTestManager(t)
+
+	tbl := routing.NewTable()
+
+	_, err := mgr.StartSharedListener(context.Background(), "wildcard:close.test:80", "127.0.0.1", 19987, tbl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.AddSharedEndpoint("wildcard:close.test:80", "ep-1")
+
+	if !mgr.HasSharedListener("wildcard:close.test:80") {
+		t.Fatal("shared listener should exist before close")
+	}
+
+	mgr.Close()
+
+	if mgr.HasSharedListener("wildcard:close.test:80") {
+		t.Fatal("shared listener should be gone after close")
+	}
+}
+
+func TestManager_RemoveSharedEndpoint_NonexistentKey(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	stopped := mgr.RemoveSharedEndpoint("nonexistent", "ep-1")
+	if stopped {
+		t.Fatal("expected false for nonexistent key")
+	}
+}
+
+func TestManager_HasSharedListener_Empty(t *testing.T) {
+	mgr := newTestManager(t)
+	defer mgr.Close()
+
+	if mgr.HasSharedListener("anything") {
+		t.Fatal("expected false on empty manager")
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/config"
+	ngrokdns "github.com/ishanjain/ngrok-forward-proxy/pkg/dns"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/health"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/hosts"
@@ -27,6 +28,7 @@ import (
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/listener"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/netif"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/socket"
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v3"
@@ -51,6 +53,12 @@ type Daemon struct {
 	
 	forwarder    *forwarder.Forwarder
 	listenerMgr  *listener.Manager
+	
+	dnsResolver    *ngrokdns.Resolver
+	resolvManager  *ngrokdns.ResolvManager
+	routingTable   *routing.Table
+	dnsListenAddr  string              // address DNS server actually bound to (e.g. "127.0.0.2:53")
+	wildcardDomains map[string]bool    // active wildcard suffix → true (e.g. "example.com")
 	
 	operatorID   string
 	registered   bool
@@ -86,6 +94,7 @@ func New(configPath string, logger logr.Logger) (*Daemon, error) {
 		endpoints:          make(map[string]socket.EndpointInfo),
 		nextPort:           cfg.Net.StartPort,
 		networkPortsByHost: make(map[string]int),
+		wildcardDomains:    make(map[string]bool),
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -161,6 +170,14 @@ func (d *Daemon) Start() error {
 		d.logger.Error(err, "Failed to start health server")
 	}
 	
+	// Initialize DNS resolver if explicitly enabled in config.
+	// DNS also auto-starts when wildcard endpoints are discovered during polling.
+	if d.config.DNS.Enabled {
+		if err := d.initDNS(); err != nil {
+			d.logger.Error(err, "Failed to initialize DNS resolver (wildcard endpoints will be skipped)")
+		}
+	}
+	
 	// Check if registered
 	if !d.registered {
 		if d.config.API.Key == "" {
@@ -208,6 +225,21 @@ func (d *Daemon) Shutdown() {
 
 		// Cancel context to stop polling, cert refresh, and config watcher
 		d.cancel()
+
+		// Clean up DNS: remove per-domain resolver files (macOS) or restore resolv.conf (Linux)
+		if d.resolvManager != nil {
+			if err := d.resolvManager.RemoveAllDomains(); err != nil {
+				d.logger.Error(err, "Failed to remove resolver domain files")
+			}
+			if err := d.resolvManager.RestoreResolvConf(); err != nil {
+				d.logger.Error(err, "Failed to restore resolv.conf")
+			}
+		}
+
+		// Stop DNS server
+		if d.dnsResolver != nil {
+			d.dnsResolver.Stop()
+		}
 
 		// Stop accepting new control-plane commands
 		if d.socketServer != nil {
@@ -318,6 +350,159 @@ func (d *Daemon) initializeForwarder() error {
 	d.mu.Unlock()
 
 	return nil
+}
+
+func (d *Daemon) dnsListenCandidates() []string {
+	if d.config.DNS.Listen != "" {
+		return []string{d.config.DNS.Listen}
+	}
+	candidates := []string{"127.0.0.1:53"}
+	for i := 2; i <= 10; i++ {
+		candidates = append(candidates, fmt.Sprintf("127.0.0.%d:53", i))
+	}
+	return candidates
+}
+
+func (d *Daemon) initDNS() error {
+	if d.dnsResolver != nil {
+		d.logger.V(1).Info("DNS resolver already running")
+		return nil
+	}
+
+	d.logger.Info("Initializing DNS resolver")
+
+	if d.routingTable == nil {
+		d.routingTable = routing.NewTable()
+	}
+	if d.resolvManager == nil {
+		d.resolvManager = ngrokdns.NewResolvManager(d.logger)
+		d.resolvManager.SetInterface(d.config.Net.InterfaceName)
+	}
+
+	// Crash recovery: restore resolv.conf / remove stale resolver files
+	if err := d.resolvManager.RecoverFromCrash(); err != nil {
+		d.logger.Error(err, "Failed to recover from crash")
+	}
+
+	// Determine upstream servers (must happen BEFORE we modify resolv.conf)
+	upstream := d.config.DNS.Upstream
+	if len(upstream) == 0 {
+		parsed, err := d.resolvManager.ParseUpstreamServers()
+		if err != nil {
+			d.logger.Error(err, "Failed to parse upstream DNS servers, using defaults")
+			upstream = []string{"8.8.8.8:53", "1.1.1.1:53"}
+		} else if len(parsed) == 0 {
+			upstream = []string{"8.8.8.8:53", "1.1.1.1:53"}
+		} else {
+			upstream = parsed
+		}
+		d.logger.Info("Auto-detected upstream DNS servers", "servers", upstream)
+	}
+
+	// Try each candidate listen address until one binds successfully
+	candidates := d.dnsListenCandidates()
+	var listenAddr string
+	var lastErr error
+	for _, addr := range candidates {
+		d.dnsResolver = ngrokdns.NewResolver(addr, upstream, d.routingTable, d.logger)
+		if err := d.dnsResolver.Start(d.ctx); err != nil {
+			d.logger.Info("DNS bind failed, trying next address", "address", addr, "error", err)
+			lastErr = err
+			d.dnsResolver = nil
+			continue
+		}
+		listenAddr = addr
+		break
+	}
+	if listenAddr == "" {
+		return fmt.Errorf("failed to start DNS server on any address (%v): %w", candidates, lastErr)
+	}
+
+	d.dnsListenAddr = listenAddr
+
+	// On Linux, optionally manage resolv.conf (prepend our nameserver)
+	if d.config.DNS.ManageResolvConf {
+		if err := d.resolvManager.ManageResolvConf(listenAddr); err != nil {
+			d.dnsResolver.Stop()
+			d.dnsResolver = nil
+			d.dnsListenAddr = ""
+			return fmt.Errorf("failed to manage resolv.conf: %w", err)
+		}
+	}
+
+	d.logger.Info("DNS resolver started",
+		"listen", listenAddr,
+		"upstream", upstream,
+		"manage_resolv_conf", d.config.DNS.ManageResolvConf)
+	return nil
+}
+
+// ensureDNSForWildcard initializes the DNS server if needed and configures
+// split-DNS for the given wildcard domain suffix. Returns true if DNS is
+// available for wildcard resolution.
+func (d *Daemon) ensureDNSForWildcard(suffix string) bool {
+	// Already tracking this domain?
+	if d.wildcardDomains[suffix] {
+		return true
+	}
+
+	// Start DNS server if not running
+	if d.dnsResolver == nil {
+		if err := d.initDNS(); err != nil {
+			d.logger.Error(err, "Cannot auto-start DNS for wildcard endpoint",
+				"suffix", suffix,
+				"hint", "check that port 53 is available or set dns.listen in config")
+			return false
+		}
+	}
+
+	// Configure platform-specific split-DNS for this domain
+	if d.resolvManager != nil {
+		if err := d.resolvManager.AddDomain(suffix, d.dnsListenAddr); err != nil {
+			d.logger.Error(err, "Failed to add split-DNS for wildcard domain",
+				"suffix", suffix)
+			return false
+		}
+	}
+
+	d.wildcardDomains[suffix] = true
+	d.logger.Info("Enabled DNS resolution for wildcard domain",
+		"suffix", suffix,
+		"dns_listen", d.dnsListenAddr)
+	return true
+}
+
+// removeWildcardDNS removes split-DNS configuration for a wildcard domain
+// if no more wildcard endpoints use it.
+func (d *Daemon) removeWildcardDNS(suffix string) {
+	// Check if any other endpoints still use this wildcard domain
+	for _, ep := range d.endpoints {
+		if ep.Wildcard && ep.WildcardSuffix == suffix {
+			return
+		}
+	}
+
+	// No more endpoints for this domain — remove split-DNS config
+	if d.resolvManager != nil {
+		if err := d.resolvManager.RemoveDomain(suffix); err != nil {
+			d.logger.Error(err, "Failed to remove split-DNS for wildcard domain",
+				"suffix", suffix)
+		}
+	}
+
+	delete(d.wildcardDomains, suffix)
+	d.logger.Info("Removed DNS resolution for wildcard domain", "suffix", suffix)
+}
+
+// isHostnameUnderWildcard returns true if the hostname falls under an active
+// wildcard domain (e.g. "foo.example.com" under "example.com").
+func (d *Daemon) isHostnameUnderWildcard(hostname string) bool {
+	for suffix := range d.wildcardDomains {
+		if hostname == suffix || strings.HasSuffix(hostname, "."+suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) pollingLoop() {
@@ -619,6 +804,15 @@ func (d *Daemon) reRegister() {
 	if d.ipAllocator != nil {
 		d.ipAllocator.ReleaseAll()
 	}
+	if d.routingTable != nil {
+		d.routingTable.ClearAll()
+	}
+	if d.resolvManager != nil {
+		if err := d.resolvManager.RemoveAllDomains(); err != nil {
+			d.logger.Error(err, "Failed to remove resolver domain files during re-register")
+		}
+	}
+	d.wildcardDomains = make(map[string]bool)
 
 	// Clear stale cert files
 	certDir := d.getCertDir()
@@ -872,7 +1066,11 @@ func (d *Daemon) rebindEndpoints(endpointIDs []string) {
 			continue
 		}
 		
-		d.listenerMgr.StopListener(id)
+		if ep.SharedListenerKey != "" {
+			d.listenerMgr.RemoveSharedEndpoint(ep.SharedListenerKey, id)
+		} else {
+			d.listenerMgr.StopListener(id)
+		}
 		d.logger.Info("Stopped listener for rebinding", "endpoint", ep.URL)
 		
 		delete(d.endpoints, id)
@@ -999,9 +1197,31 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		d.logger.Error(err, "Failed to parse endpoint", "url", ep.URL)
 		return
 	}
+
+	// Detect wildcard endpoints (e.g. *.example.com)
+	isWildcard := ipalloc.IsWildcard(hostname)
+	wildcardSuffix := ipalloc.WildcardSuffix(hostname)
+
+	// For wildcard endpoints, auto-start DNS if not already running
+	if isWildcard {
+		if !d.ensureDNSForWildcard(wildcardSuffix) {
+			d.logger.Info("Skipping wildcard endpoint - DNS could not be started",
+				"url", ep.URL,
+				"hostname", hostname,
+				"hint", "check that port 53 is available or set dns.listen in config")
+			return
+		}
+	}
+
+	// For wildcard endpoints, use a synthetic allocator key so all
+	// *.suffix endpoints share a single IP.
+	allocatorKey := hostname
+	if isWildcard {
+		allocatorKey = ipalloc.WildcardAllocatorKey(wildcardSuffix)
+	}
 	
 	// Allocate IP for hostname and port (reuses IP if port available)
-	ipStr, err := d.ipAllocator.AllocateIPForPort(hostname, port)
+	ipStr, err := d.ipAllocator.AllocateIPForPort(allocatorKey, port)
 	if err != nil {
 		d.logger.Error(err, "Failed to allocate IP", "hostname", hostname, "port", port)
 		return
@@ -1010,7 +1230,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		d.logger.Error(fmt.Errorf("invalid IP"), "Failed to parse allocated IP", "ip", ipStr)
-		d.ipAllocator.ReleaseIP(hostname)
+		d.ipAllocator.ReleaseIP(allocatorKey)
 		return
 	}
 	
@@ -1026,8 +1246,8 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	}
 	
 	cleanupIP := func() {
-		d.ipAllocator.ReleaseIP(hostname)
-		if ipAddedToInterface && d.netInterface != nil {
+		_, ipFreed := d.ipAllocator.ReleaseIPForPort(allocatorKey, port)
+		if ipFreed && ipAddedToInterface && d.netInterface != nil {
 			if err := d.netInterface.RemoveIP(ip); err != nil {
 				d.logger.Error(err, "Failed to remove IP during cleanup", "ip", ipStr)
 			}
@@ -1084,6 +1304,64 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	var listenAddr string
 	var listenPort int
 	virtualMode := listenInterface == "virtual"
+	
+	// Wildcard + network mode: use a shared listener with SNI/Host routing
+	// so all *.example.com connections arrive on the original port (e.g. 443)
+	// and are routed by TLS SNI or HTTP Host header.
+	if isWildcard && !virtualMode {
+		sharedKey := fmt.Sprintf("wildcard:%s:%d", wildcardSuffix, port)
+		
+		if d.routingTable == nil {
+			d.routingTable = routing.NewTable()
+		}
+		
+		created, err := d.listenerMgr.StartSharedListener(d.ctx, sharedKey, listenInterface, port, d.routingTable)
+		if err != nil {
+			d.logger.Error(err, "Failed to start shared listener for wildcard endpoint",
+				"key", sharedKey,
+				"address", fmt.Sprintf("%s:%d", listenInterface, port))
+			cleanupIP()
+			return
+		}
+		if created {
+			d.logger.Info("Created shared listener for wildcard domain",
+				"key", sharedKey,
+				"address", fmt.Sprintf("%s:%d", listenInterface, port))
+		}
+		
+		d.listenerMgr.AddSharedEndpoint(sharedKey, ep.ID)
+		
+		d.healthServer.RegisterEndpoint(ep.ID, fmt.Sprintf("%s:%d", ipStr, port), ep.URL)
+		
+		d.endpoints[ep.ID] = socket.EndpointInfo{
+			ID:                ep.ID,
+			Hostname:          hostname,
+			IP:                ipStr,
+			Port:              port,
+			URL:               ep.URL,
+			LocalListener:     true,
+			NetworkPort:       port,
+			ListenInterface:   listenInterface,
+			Wildcard:          isWildcard,
+			WildcardSuffix:    wildcardSuffix,
+			SharedListenerKey: sharedKey,
+		}
+		
+		if d.routingTable != nil {
+			ip := net.ParseIP(ipStr)
+			if ip != nil {
+				d.routingTable.AddWildcard(wildcardSuffix, ip)
+			}
+		}
+		
+		d.logger.Info("Added wildcard endpoint via shared listener",
+			"hostname", hostname,
+			"ip", ipStr,
+			"port", port,
+			"url", ep.URL,
+			"shared_key", sharedKey)
+		return
+	}
 	
 	if virtualMode {
 		// Virtual mode: unique IP, original port
@@ -1197,50 +1475,78 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		LocalListener:   localListenerOK,
 		NetworkPort:     networkPort,
 		ListenInterface: listenInterface,
+		Wildcard:        isWildcard,
+		WildcardSuffix:  wildcardSuffix,
+	}
+	
+	// Update DNS routing table for wildcard endpoints and exact endpoints
+	// that fall under an active wildcard domain (those go through DNS, not /etc/hosts).
+	if d.routingTable != nil {
+		ip := net.ParseIP(ipStr)
+		if ip != nil {
+			if isWildcard {
+				d.routingTable.AddWildcard(wildcardSuffix, ip)
+			} else if d.isHostnameUnderWildcard(hostname) {
+				d.routingTable.AddExact(hostname, ip)
+			}
+		}
 	}
 	
 	d.logger.Info("Added bound endpoint",
 		"hostname", hostname,
 		"ip", ipStr,
 		"port", port,
-		"url", ep.URL)
+		"url", ep.URL,
+		"wildcard", isWildcard,
+		"dns_routed", isWildcard || d.isHostnameUnderWildcard(hostname))
 }
 
 func (d *Daemon) removeEndpoint(id string) {
-	if ep, exists := d.endpoints[id]; exists {
-		// Stop listener
-		if d.listenerMgr != nil {
+	ep, exists := d.endpoints[id]
+	if !exists {
+		return
+	}
+
+	if d.listenerMgr != nil {
+		if ep.SharedListenerKey != "" {
+			d.listenerMgr.RemoveSharedEndpoint(ep.SharedListenerKey, id)
+		} else {
 			d.listenerMgr.StopListener(id)
 		}
-		d.healthServer.UnregisterEndpoint(id)
-		
-		// Remove from tracking first so the hostname check below is accurate
-		delete(d.endpoints, id)
-		
-		// Only release IP and remove from interface if no other endpoints
-		// share this hostname (e.g., same host on different ports)
-		hostnameStillInUse := false
-		for _, other := range d.endpoints {
-			if other.Hostname == ep.Hostname {
-				hostnameStillInUse = true
-				break
-			}
-		}
-		
-		if !hostnameStillInUse {
-			if d.netInterface != nil {
-				ip := net.ParseIP(ep.IP)
-				if ip != nil {
-					if err := d.netInterface.RemoveIP(ip); err != nil {
-						d.logger.Error(err, "Failed to remove IP from interface", "ip", ep.IP)
-					}
+	}
+	d.healthServer.UnregisterEndpoint(id)
+	delete(d.endpoints, id)
+
+	releaseKey := ep.Hostname
+	if ep.Wildcard {
+		releaseKey = ipalloc.WildcardAllocatorKey(ep.WildcardSuffix)
+	}
+	_, ipFreed := d.ipAllocator.ReleaseIPForPort(releaseKey, ep.Port)
+	if ipFreed {
+		if d.netInterface != nil {
+			ip := net.ParseIP(ep.IP)
+			if ip != nil {
+				if err := d.netInterface.RemoveIP(ip); err != nil {
+					d.logger.Error(err, "Failed to remove IP from interface", "ip", ep.IP)
 				}
 			}
-			d.ipAllocator.ReleaseIP(ep.Hostname)
 		}
-		
-		d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP)
+		// Remove DNS record when IP is fully freed
+		if d.routingTable != nil {
+			if ep.Wildcard {
+				d.routingTable.RemoveWildcard(ep.WildcardSuffix)
+			} else if d.isHostnameUnderWildcard(ep.Hostname) {
+				d.routingTable.RemoveExact(ep.Hostname)
+			}
+		}
 	}
+
+	// Clean up wildcard DNS config if this was the last endpoint for this suffix
+	if ep.Wildcard {
+		d.removeWildcardDNS(ep.WildcardSuffix)
+	}
+
+	d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP, "port", ep.Port)
 }
 
 func (d *Daemon) findLowestAvailablePort() int {
@@ -1256,9 +1562,24 @@ func (d *Daemon) findLowestAvailablePort() int {
 }
 
 func (d *Daemon) updateHosts() {
-	mappings := d.ipAllocator.GetAllMappings()
+	allMappings := d.ipAllocator.GetAllMappings()
+
+	// Filter out wildcard allocator keys (e.g. "wildcard:example.com") and
+	// exact hostnames that are under an active wildcard domain (those go
+	// through DNS, not /etc/hosts, to avoid split-brain).
+	hostsMappings := make(map[string]string, len(allMappings))
+	for hostname, ip := range allMappings {
+		if strings.HasPrefix(hostname, "wildcard:") {
+			continue
+		}
+		if d.isHostnameUnderWildcard(hostname) {
+			continue
+		}
+		hostsMappings[hostname] = ip
+	}
+
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := d.hostsManager.UpdateHosts(mappings); err != nil {
+		if err := d.hostsManager.UpdateHosts(hostsMappings); err != nil {
 			d.logger.Error(err, "Failed to update /etc/hosts", "attempt", attempt+1)
 			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
 			continue

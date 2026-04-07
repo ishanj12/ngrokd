@@ -28,6 +28,9 @@ net:
   subnet: 10.107.0.0/16
   listen_interface: "virtual"  # Unique IP per endpoint + /etc/hosts
   start_port: 9080
+
+dns:
+  enabled: false  # Auto-starts when wildcard endpoints are discovered
 EOF
 fi
 
