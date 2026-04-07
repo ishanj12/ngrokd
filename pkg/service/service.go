@@ -62,6 +62,11 @@ func Install() error {
 		}
 	}
 
+	// Create default config if it doesn't exist
+	if err := createDefaultConfig(); err != nil {
+		return err
+	}
+
 	if err := installService(); err != nil {
 		return err
 	}
@@ -72,6 +77,52 @@ func Install() error {
 	fmt.Println("  sudo ngrokd start          # start the daemon")
 	fmt.Println("  ngrokctl set-api-key <KEY>  # set your API key")
 	fmt.Println("  ngrokctl list               # list endpoints")
+	return nil
+}
+
+const defaultConfig = `api:
+  url: https://api.ngrok.com
+  key: ""
+
+ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
+
+server:
+  log_level: info
+  socket_path: /var/run/ngrokd.sock
+  client_cert: /etc/ngrokd/tls.crt
+  client_key: /etc/ngrokd/tls.key
+  cert_refresh_interval: 3600
+  health_address: "127.0.0.1"
+  health_port: 8081
+
+bound_endpoints:
+  poll_interval: 30
+
+net:
+  interface_name: ngrokd0
+  subnet: 10.107.0.0/16
+  listen_interface: "virtual"
+  start_port: 9080
+
+dns:
+  enabled: false
+`
+
+func createDefaultConfig() error {
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config dir: %w", err)
+	}
+
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf("✓ Config already exists at %s\n", configPath)
+		return nil
+	}
+
+	if err := os.WriteFile(configPath, []byte(defaultConfig), 0600); err != nil {
+		return fmt.Errorf("failed to create config: %w", err)
+	}
+	fmt.Printf("✓ Created default config at %s\n", configPath)
 	return nil
 }
 
