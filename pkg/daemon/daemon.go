@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -861,8 +862,7 @@ func (d *Daemon) getNetworkPortsPath() string {
 }
 
 func (d *Daemon) isMacOS() bool {
-	// Simple runtime OS detection
-	return os.Getenv("HOME") != "" && fileExists("/System/Library/CoreServices/SystemVersion.plist")
+	return runtime.GOOS == "darwin"
 }
 
 func fileExists(path string) bool {
