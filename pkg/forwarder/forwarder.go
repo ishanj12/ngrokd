@@ -1,6 +1,7 @@
 package forwarder
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -8,11 +9,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/ishanjain/ngrok-forward-proxy/internal/mux"
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
+	"github.com/ishanjain/ngrok-forward-proxy/pkg/sni"
 )
 
 // Config holds the configuration for the forwarder
@@ -153,8 +156,11 @@ func (f *Forwarder) ForwardConnection(ctx context.Context, localConn net.Conn, e
 	f.logger.V(1).Info("mTLS connection established", "endpoint", f.config.IngressEndpoint)
 
 	// Step 2: Determine the host for the binding protocol upgrade.
-	// Use RequestedHost (from SNI/Host header) if set (wildcard/router),
+	// Use RequestedHost (from SNI/Host header) if set (shared/network mode),
 	// otherwise extract from the endpoint URI (static endpoints).
+	// For wildcard endpoints in virtual mode, peek at the connection to
+	// extract the actual hostname so ngrok cloud, traffic policy, and
+	// downstream services (e.g. nginx) see the real host, not "*.example.com".
 	var host string
 	if endpoint.RequestedHost != "" {
 		host = endpoint.RequestedHost
@@ -162,6 +168,19 @@ func (f *Forwarder) ForwardConnection(ctx context.Context, localConn net.Conn, e
 		host, err = extractHost(endpoint.URI)
 		if err != nil {
 			return fmt.Errorf("failed to parse endpoint URI: %w", err)
+		}
+	}
+
+	// For wildcard endpoints, extract the actual hostname from the connection
+	// so the binding protocol and downstream see "a.example.com" not "*.example.com".
+	if strings.HasPrefix(host, "*.") {
+		realHost, wrappedConn, peekErr := peekHostname(localConn, endpoint.Port)
+		if peekErr == nil && realHost != "" {
+			f.logger.V(1).Info("extracted real hostname for wildcard",
+				"wildcard", host,
+				"actual", realHost)
+			host = realHost
+			localConn = wrappedConn
 		}
 	}
 
@@ -177,10 +196,14 @@ func (f *Forwarder) ForwardConnection(ctx context.Context, localConn net.Conn, e
 		"endpointID", resp.EndpointID,
 		"proto", resp.Proto)
 
-	// Step 4: Rewrite Host header to match endpoint, then raw proxy.
-	// The binding protocol already identifies the endpoint, but ngrok's
-	// server still validates the HTTP Host header against the tunnel.
-	err = hostRewritingProxy(localConn, ngrokConn, host, endpoint.Port)
+	// Step 4: Proxy traffic. For exact endpoints, rewrite the Host header
+	// to match the endpoint. For wildcard endpoints (where we extracted the
+	// real hostname above), use rawProxy to preserve the original Host header.
+	if endpoint.RequestedHost != "" || !strings.Contains(endpoint.URI, "*.") {
+		err = hostRewritingProxy(localConn, ngrokConn, host, endpoint.Port)
+	} else {
+		err = rawProxy(localConn, ngrokConn)
+	}
 	if err != nil {
 		f.logger.V(1).Info("connection closed with error", "error", err)
 	} else {
@@ -244,4 +267,70 @@ func extractHost(endpointURI string) (string, error) {
 	}
 
 	return hostname, nil
+}
+
+// peekHostname extracts the real hostname from a connection by peeking at
+// TLS SNI (for HTTPS/TLS) or the HTTP Host header (for HTTP).
+// Returns the hostname, a wrapped connection that replays peeked bytes, and any error.
+func peekHostname(conn net.Conn, port int) (string, net.Conn, error) {
+	// Try TLS SNI first
+	serverName, wrapped, err := sni.PeekClientHelloConn(conn)
+	if err == nil && serverName != "" {
+		return serverName, wrapped, nil
+	}
+
+	// Not TLS — try HTTP Host header via the existing hostRewritingProxy peek logic
+	// Use a bufio.Reader to peek at the data
+	br := bufio.NewReaderSize(wrapped, 8192)
+	peek, peekErr := br.Peek(4)
+	readerW := &readerConn{Reader: br, Conn: wrapped}
+	if peekErr != nil || !looksLikeHTTP(peek) {
+		return "", readerW, fmt.Errorf("not HTTP")
+	}
+
+	// Peek at buffered data to find Host header
+	avail := br.Buffered()
+	if avail < 4 {
+		avail = 4
+	}
+	peek, _ = br.Peek(avail)
+	host := scanHostHeader(peek)
+	if host == "" {
+		return "", readerW, fmt.Errorf("no Host header found")
+	}
+
+	// Strip port from Host value
+	if h, _, splitErr := net.SplitHostPort(host); splitErr == nil {
+		host = h
+	}
+
+	return host, readerW, nil
+}
+
+// scanHostHeader scans raw HTTP header bytes for the Host header value.
+func scanHostHeader(data []byte) string {
+	s := string(data)
+	idx := strings.Index(s, "\r\n")
+	if idx < 0 {
+		idx = strings.Index(s, "\n")
+		if idx < 0 {
+			return ""
+		}
+	}
+	headers := s[idx:]
+
+	for _, prefix := range []string{"\r\nHost: ", "\nHost: ", "\r\nhost: ", "\nhost: "} {
+		i := strings.Index(strings.ToLower(headers), strings.ToLower(prefix))
+		if i < 0 {
+			continue
+		}
+		valStart := i + len(prefix)
+		rest := headers[valStart:]
+		end := strings.IndexAny(rest, "\r\n")
+		if end < 0 {
+			return ""
+		}
+		return strings.TrimSpace(rest[:end])
+	}
+	return ""
 }

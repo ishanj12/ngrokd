@@ -3,10 +3,12 @@ package listener
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"net"
-	"net/http"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
@@ -47,6 +49,11 @@ func (m *Manager) StartSharedListener(ctx context.Context, key, addr string, por
 	listenAddr := fmt.Sprintf("%s:%d", addr, port)
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
+		if isAddrInUse(err) {
+			return false, fmt.Errorf("port %d is already in use on %s — another process is listening on this port. "+
+				"Either stop the conflicting process, run ngrokd in its own container, "+
+				"or use listen_interface: virtual to avoid port conflicts: %w", port, addr, err)
+		}
 		return false, fmt.Errorf("failed to create shared listener on %s: %w", listenAddr, err)
 	}
 
@@ -166,9 +173,14 @@ func (m *Manager) handleSharedConnection(ctx context.Context, sl *sharedListener
 		"to", fmt.Sprintf("%s:%d", hostname, sl.port),
 		"via", sl.key)
 
+	scheme := "https"
+	if sl.port == 80 {
+		scheme = "http"
+	}
+
 	endpoint := forwarder.BoundEndpoint{
 		Name:          sl.key,
-		URI:           fmt.Sprintf("https://%s:%d", hostname, sl.port),
+		URI:           fmt.Sprintf("%s://%s:%d", scheme, hostname, sl.port),
 		Port:          sl.port,
 		RequestedHost: hostname,
 	}
@@ -202,7 +214,10 @@ func extractHostname(conn net.Conn, port int) (string, net.Conn, error) {
 	return "", wrapped, fmt.Errorf("could not extract hostname: tls=%v http=%v", err, httpErr)
 }
 
-// extractHTTPHost peeks at a connection to extract the HTTP Host header.
+// extractHTTPHost peeks at a connection to extract the HTTP Host header
+// without consuming any bytes. The returned connection replays all peeked
+// data so downstream readers (e.g. hostRewritingProxy) see the original
+// request verbatim.
 func extractHTTPHost(conn net.Conn) (string, net.Conn, error) {
 	br := bufio.NewReaderSize(conn, 8192)
 
@@ -217,27 +232,57 @@ func extractHTTPHost(conn net.Conn) (string, net.Conn, error) {
 		return "", wrapped, fmt.Errorf("not HTTP")
 	}
 
-	req, err := http.ReadRequest(br)
-	if err != nil {
-		wrapped := &readerConn{Reader: br, Conn: conn}
-		return "", wrapped, fmt.Errorf("failed to read HTTP request: %w", err)
+	// Peek at whatever data is already buffered. The initial Peek(4)
+	// caused bufio to read a chunk from the connection (typically the
+	// entire HTTP request in one TCP segment). We use br.Buffered() to
+	// read only what's available without blocking.
+	avail := br.Buffered()
+	if avail < 4 {
+		avail = 4
+	}
+	peek, err = br.Peek(avail)
+	host := scanHostHeader(peek)
+
+	wrapped := &readerConn{Reader: br, Conn: conn}
+
+	if host == "" {
+		return "", wrapped, fmt.Errorf("no Host header found")
 	}
 
-	host := req.Host
 	if h, _, splitErr := net.SplitHostPort(host); splitErr == nil {
 		host = h
 	}
 
-	// We consumed the request bytes — we need to replay them.
-	// Reconstruct and prepend the request bytes.
-	var buf strings.Builder
-	req.Write(&buf)
-	combined := &prefixConn{
-		prefix: []byte(buf.String()),
-		Conn:   conn,
-	}
+	return host, wrapped, nil
+}
 
-	return host, combined, nil
+// scanHostHeader scans raw HTTP header bytes for the Host header value.
+func scanHostHeader(data []byte) string {
+	s := string(data)
+	// Skip the request line
+	idx := strings.Index(s, "\r\n")
+	if idx < 0 {
+		idx = strings.Index(s, "\n")
+		if idx < 0 {
+			return ""
+		}
+	}
+	headers := s[idx:]
+
+	for _, prefix := range []string{"\r\nHost: ", "\nHost: ", "\r\nhost: ", "\nhost: "} {
+		i := strings.Index(strings.ToLower(headers), strings.ToLower(prefix))
+		if i < 0 {
+			continue
+		}
+		valStart := i + len(prefix)
+		rest := headers[valStart:]
+		end := strings.IndexAny(rest, "\r\n")
+		if end < 0 {
+			return ""
+		}
+		return strings.TrimSpace(rest[:end])
+	}
+	return ""
 }
 
 func looksLikeHTTP(b []byte) bool {
@@ -260,18 +305,16 @@ func (r *readerConn) Read(p []byte) (int, error) {
 	return r.Reader.Read(p)
 }
 
-// prefixConn replays prefix bytes before reading from the underlying conn.
-type prefixConn struct {
-	prefix []byte
-	off    int
-	net.Conn
+// isAddrInUse returns true if the error is caused by EADDRINUSE.
+func isAddrInUse(err error) bool {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		var sysErr *os.SyscallError
+		if errors.As(opErr.Err, &sysErr) {
+			return errors.Is(sysErr.Err, syscall.EADDRINUSE)
+		}
+	}
+	return false
 }
 
-func (c *prefixConn) Read(p []byte) (int, error) {
-	if c.off < len(c.prefix) {
-		n := copy(p, c.prefix[c.off:])
-		c.off += n
-		return n, nil
-	}
-	return c.Conn.Read(p)
-}
+

@@ -70,6 +70,11 @@ func (m *Manager) StartListener(ctx context.Context, endpoint forwarder.BoundEnd
 	addr := fmt.Sprintf("%s:%d", localIP, endpoint.LocalPort)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
+		if isAddrInUse(err) {
+			return fmt.Errorf("port %d is already in use on %s — another process is listening on this port. "+
+				"Either stop the conflicting process, run ngrokd in its own container, "+
+				"or use listen_interface: virtual to avoid port conflicts: %w", endpoint.LocalPort, localIP, err)
+		}
 		return fmt.Errorf("failed to create listener on %s: %w", addr, err)
 	}
 

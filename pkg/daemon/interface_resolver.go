@@ -62,6 +62,33 @@ func (d *Daemon) resolveInterfaceToIP(interfaceSpec string) (string, error) {
 }
 
 // listAvailableInterfaces returns a list of available network interfaces with their IPs
+// getLANIP returns the first non-loopback IPv4 address on the machine,
+// which is typically the primary LAN IP.
+func (d *Daemon) getLANIP() string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipNet, ok := addr.(*net.IPNet); ok {
+				if ip4 := ipNet.IP.To4(); ip4 != nil {
+					return ip4.String()
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func (d *Daemon) listAvailableInterfaces() []string {
 	interfaces, err := net.Interfaces()
 	if err != nil {

@@ -357,7 +357,25 @@ func (d *Daemon) dnsListenCandidates() []string {
 	if d.config.DNS.Listen != "" {
 		return []string{d.config.DNS.Listen}
 	}
-	candidates := []string{"127.0.0.1:53"}
+
+	var candidates []string
+
+	// In network mode, include the listen interface IP so external clients
+	// can reach the DNS server.
+	if d.config.Net.ListenInterface != "virtual" {
+		if d.config.Net.ListenInterface == "0.0.0.0" {
+			if lanIP := d.getLANIP(); lanIP != "" {
+				candidates = append(candidates, lanIP+":53")
+			}
+		} else {
+			if resolved, err := d.resolveInterfaceToIP(d.config.Net.ListenInterface); err == nil {
+				candidates = append(candidates, resolved+":53")
+			}
+		}
+	}
+
+	// Always include loopback candidates as fallback
+	candidates = append(candidates, "127.0.0.1:53")
 	for i := 2; i <= 10; i++ {
 		candidates = append(candidates, fmt.Sprintf("127.0.0.%d:53", i))
 	}
@@ -1305,11 +1323,16 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	var listenPort int
 	virtualMode := listenInterface == "virtual"
 	
-	// Wildcard + network mode: use a shared listener with SNI/Host routing
-	// so all *.example.com connections arrive on the original port (e.g. 443)
-	// and are routed by TLS SNI or HTTP Host header.
-	if isWildcard && !virtualMode {
-		sharedKey := fmt.Sprintf("wildcard:%s:%d", wildcardSuffix, port)
+	// Determine endpoint protocol from URL scheme
+	scheme := strings.SplitN(ep.URL, "://", 2)[0]
+	canShareListener := scheme == "https" || scheme == "http" || scheme == "tls"
+	
+	// Network mode with routable protocol: use a shared listener with SNI/Host
+	// routing so multiple endpoints share the original port (e.g. 443).
+	// Works for wildcard (*.example.com) and static (ghes-api.cars.dev) endpoints.
+	// Raw TCP endpoints fall through to direct bind or port remapping.
+	if !virtualMode && canShareListener {
+		sharedKey := fmt.Sprintf("shared:%s:%d", listenInterface, port)
 		
 		if d.routingTable == nil {
 			d.routingTable = routing.NewTable()
@@ -1317,14 +1340,14 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		
 		created, err := d.listenerMgr.StartSharedListener(d.ctx, sharedKey, listenInterface, port, d.routingTable)
 		if err != nil {
-			d.logger.Error(err, "Failed to start shared listener for wildcard endpoint",
+			d.logger.Error(err, "Failed to start shared listener",
 				"key", sharedKey,
 				"address", fmt.Sprintf("%s:%d", listenInterface, port))
 			cleanupIP()
 			return
 		}
 		if created {
-			d.logger.Info("Created shared listener for wildcard domain",
+			d.logger.Info("Created shared listener",
 				"key", sharedKey,
 				"address", fmt.Sprintf("%s:%d", listenInterface, port))
 		}
@@ -1348,17 +1371,32 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		}
 		
 		if d.routingTable != nil {
-			ip := net.ParseIP(ipStr)
+			// In network mode, DNS must return an IP reachable by external
+			// clients (e.g. phones on the LAN). Use the listen interface IP
+			// rather than the virtual loopback IP. For 0.0.0.0, resolve to
+			// the machine's primary LAN IP.
+			routingIP := listenInterface
+			if routingIP == "0.0.0.0" {
+				if lanIP := d.getLANIP(); lanIP != "" {
+					routingIP = lanIP
+				}
+			}
+			ip := net.ParseIP(routingIP)
 			if ip != nil {
-				d.routingTable.AddWildcard(wildcardSuffix, ip)
+				if isWildcard {
+					d.routingTable.AddWildcard(wildcardSuffix, ip)
+				} else {
+					d.routingTable.AddExact(hostname, ip)
+				}
 			}
 		}
 		
-		d.logger.Info("Added wildcard endpoint via shared listener",
+		d.logger.Info("Added endpoint via shared listener",
 			"hostname", hostname,
 			"ip", ipStr,
 			"port", port,
 			"url", ep.URL,
+			"wildcard", isWildcard,
 			"shared_key", sharedKey)
 		return
 	}
@@ -1368,25 +1406,10 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		listenAddr = ipStr
 		listenPort = port
 	} else {
-		// Network mode: specific interface, persistent port
+		// Network mode (raw TCP): bind on original port if available,
+		// fall back to remapped port on conflict
 		listenAddr = listenInterface
-		
-		// Use hostname:port as key to support same hostname with different ports
-		endpointKey := fmt.Sprintf("%s:%d", hostname, port)
-		
-		// Check if this endpoint already has a network port assigned
-		if existingPort, exists := d.networkPortsByHost[endpointKey]; exists {
-			listenPort = existingPort
-			d.logger.V(1).Info("Reusing network port", "endpoint_key", endpointKey, "port", existingPort)
-		} else {
-			// Allocate lowest available port starting from StartPort
-			listenPort = d.findLowestAvailablePort()
-			d.networkPortsByHost[endpointKey] = listenPort
-			if listenPort >= d.nextPort {
-				d.nextPort = listenPort + 1
-			}
-			d.logger.Info("Allocated network port", "endpoint_key", endpointKey, "port", listenPort)
-		}
+		listenPort = port
 	}
 	
 	// Create listener with retry on port conflict
@@ -1535,7 +1558,7 @@ func (d *Daemon) removeEndpoint(id string) {
 		if d.routingTable != nil {
 			if ep.Wildcard {
 				d.routingTable.RemoveWildcard(ep.WildcardSuffix)
-			} else if d.isHostnameUnderWildcard(ep.Hostname) {
+			} else if ep.SharedListenerKey != "" || d.isHostnameUnderWildcard(ep.Hostname) {
 				d.routingTable.RemoveExact(ep.Hostname)
 			}
 		}
@@ -1567,6 +1590,24 @@ func (d *Daemon) updateHosts() {
 	// Filter out wildcard allocator keys (e.g. "wildcard:example.com") and
 	// exact hostnames that are under an active wildcard domain (those go
 	// through DNS, not /etc/hosts, to avoid split-brain).
+	//
+	// In network mode, /etc/hosts must use the listen interface IP (or LAN IP
+	// for 0.0.0.0) instead of the virtual IP, so connections reach the shared
+	// listener.
+	listenIface := d.config.Net.ListenInterface
+	isNetworkMode := listenIface != "virtual"
+	var networkIP string
+	if isNetworkMode {
+		if listenIface == "0.0.0.0" {
+			networkIP = d.getLANIP()
+		} else {
+			resolved, err := d.resolveInterfaceToIP(listenIface)
+			if err == nil {
+				networkIP = resolved
+			}
+		}
+	}
+
 	hostsMappings := make(map[string]string, len(allMappings))
 	for hostname, ip := range allMappings {
 		if strings.HasPrefix(hostname, "wildcard:") {
@@ -1575,7 +1616,11 @@ func (d *Daemon) updateHosts() {
 		if d.isHostnameUnderWildcard(hostname) {
 			continue
 		}
-		hostsMappings[hostname] = ip
+		if isNetworkMode && networkIP != "" {
+			hostsMappings[hostname] = networkIP
+		} else {
+			hostsMappings[hostname] = ip
+		}
 	}
 
 	for attempt := 0; attempt < 3; attempt++ {
