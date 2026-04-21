@@ -49,7 +49,7 @@
         <div class="feature-card">
           <div class="feature-icon">📝</div>
           <h3>Automatic DNS</h3>
-          <p>Manages /etc/hosts automatically - no manual DNS configuration needed.</p>
+          <p>Built-in DNS server for network mode with /etc/hosts management for virtual mode. Supports both exact and wildcard endpoints.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔐</div>
@@ -70,6 +70,16 @@
           <div class="feature-icon">💾</div>
           <h3>State Persistence</h3>
           <p>Same hostname gets same IP/port across daemon restarts for consistency.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🃏</div>
+          <h3>Wildcard Endpoints</h3>
+          <p>Full support for *.example.com endpoints with SNI/Host header routing and built-in DNS resolution.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📡</div>
+          <h3>Network Mode</h3>
+          <p>Share endpoints with phones, VMs, and CI runners on your LAN via shared listeners and built-in DNS.</p>
         </div>
       </div>
     </section>
@@ -141,7 +151,7 @@
           </tr>
         </tbody>
       </table>
-      <p style="margin-top: 1rem;"><em>All platforms support both virtual mode (unique IPs) and network mode (port-based access).</em></p>
+      <p style="margin-top: 1rem;"><em>All platforms support both virtual mode (unique IPs per endpoint) and network mode (shared listeners with SNI/Host routing + built-in DNS).</em></p>
     </section>
 
     <!-- Installation -->
@@ -161,15 +171,15 @@
         
         <h3>Download Pre-built Binaries</h3>
         <pre><code># Apple Silicon
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-darwin-arm64.tar.gz
-tar xzf ngrokd-v0.3.0-darwin-arm64.tar.gz
-cd ngrokd-v0.3.0-darwin-arm64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.6/ngrokd-v0.3.6-darwin-arm64.tar.gz
+tar xzf ngrokd-v0.3.6-darwin-arm64.tar.gz
+cd ngrokd-v0.3.6-darwin-arm64
 sudo ./install.sh
 
 # Intel Mac
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-darwin-amd64.tar.gz
-tar xzf ngrokd-v0.3.0-darwin-amd64.tar.gz
-cd ngrokd-v0.3.0-darwin-amd64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.6/ngrokd-v0.3.6-darwin-amd64.tar.gz
+tar xzf ngrokd-v0.3.6-darwin-amd64.tar.gz
+cd ngrokd-v0.3.6-darwin-amd64
 sudo ./install.sh</code></pre>
 
         <h3>Start Daemon</h3>
@@ -194,15 +204,15 @@ curl http://your-endpoint/</code></pre>
         
         <h3>Download Pre-built Binaries</h3>
         <pre><code># AMD64
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-linux-amd64.tar.gz
-tar xzf ngrokd-v0.3.0-linux-amd64.tar.gz
-cd ngrokd-v0.3.0-linux-amd64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.6/ngrokd-v0.3.6-linux-amd64.tar.gz
+tar xzf ngrokd-v0.3.6-linux-amd64.tar.gz
+cd ngrokd-v0.3.6-linux-amd64
 sudo ./install.sh
 
 # ARM64
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-linux-arm64.tar.gz
-tar xzf ngrokd-v0.3.0-linux-arm64.tar.gz
-cd ngrokd-v0.3.0-linux-arm64
+curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.3.6/ngrokd-v0.3.6-linux-arm64.tar.gz
+tar xzf ngrokd-v0.3.6-linux-arm64.tar.gz
+cd ngrokd-v0.3.6-linux-arm64
 sudo ./install.sh</code></pre>
 
         <h3>Start Daemon</h3>
@@ -243,9 +253,9 @@ curl http://your-endpoint/</code></pre>
         <p><strong>Run PowerShell as Administrator</strong></p>
         
         <p><strong>1. Download and extract:</strong></p>
-        <pre><code>iwr https://github.com/ishanj12/ngrokd/releases/download/v0.3.0/ngrokd-v0.3.0-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
+        <pre><code>iwr https://github.com/ishanj12/ngrokd/releases/download/v0.3.6/ngrokd-v0.3.6-windows-amd64.tar.gz -OutFile ngrokd.tar.gz
 tar -xzf ngrokd.tar.gz
-cd ngrokd-v0.3.0-windows-amd64</code></pre>
+cd ngrokd-v0.3.6-windows-amd64</code></pre>
 
         <p><strong>2. Install binaries:</strong></p>
         <pre><code># Copy to permanent location
@@ -368,37 +378,36 @@ volumes:
 
       <div class="card">
         <h4>Network Mode - All Interfaces</h4>
-        <p>Binds to 0.0.0.0 with sequential ports. Best for network accessibility.</p>
+        <p>Uses shared listeners with SNI/Host header routing. Multiple endpoints share the original port (80, 443). Built-in DNS server resolves hostnames for external clients (phones, VMs, CI). Best for cross-machine access.</p>
         <pre><code>net:
-  listen_interface: "0.0.0.0"
-  start_port: 9080</code></pre>
+  listen_interface: "0.0.0.0"</code></pre>
         <p><strong>Example:</strong></p>
         <ul>
-          <li>Endpoint 1: 0.0.0.0:9080</li>
-          <li>Endpoint 2: 0.0.0.0:9081</li>
-          <li>Endpoint 3: 0.0.0.0:9082</li>
+          <li>All HTTPS endpoints share 0.0.0.0:443 (routed by SNI)</li>
+          <li>All HTTP endpoints share 0.0.0.0:80 (routed by Host header)</li>
+          <li>DNS server at &lt;LAN_IP&gt;:53 resolves all managed hostnames</li>
+          <li>External clients: set DNS to ngrokd machine's IP</li>
         </ul>
       </div>
 
       <div class="card">
         <h4>Network Mode - Named Interface</h4>
-        <p>Bind to a specific network interface. Great for multi-homed servers.</p>
+        <p>Bind shared listeners to a specific network interface. Great for multi-homed servers.</p>
         <pre><code>net:
-  listen_interface: "eth0"    # or "en0", "enp0s1", etc.
-  start_port: 9080</code></pre>
+  listen_interface: "eth0"    # or "en0", "enp0s1", etc.</code></pre>
         <p><strong>Example:</strong></p>
         <ul>
           <li>Automatically resolves eth0 to its IP (e.g., 192.168.1.100)</li>
-          <li>Endpoints bind to 192.168.1.100:9080, 9081, 9082...</li>
+          <li>Shared listeners on 192.168.1.100:443, 192.168.1.100:80</li>
+          <li>DNS server at 192.168.1.100:53</li>
         </ul>
       </div>
 
       <div class="card">
         <h4>Network Mode - Specific IP</h4>
-        <p>Bind to a specific IP address.</p>
+        <p>Bind shared listeners to a specific IP address.</p>
         <pre><code>net:
-  listen_interface: "192.168.1.100"
-  start_port: 9080</code></pre>
+  listen_interface: "192.168.1.100"</code></pre>
       </div>
 
       <h3>Per-Endpoint Overrides</h3>
@@ -510,19 +519,18 @@ docker exec -it ngrokd ngrokctl config edit
       <h2>Technical Details</h2>
 
       <h3>Architecture</h3>
-      <pre><code>Local Application
-    ↓ (resolves via /etc/hosts)
-Unique IP per Endpoint (virtual mode)
-    ↓ (daemon listener)
-Host Header Rewrite (rewrites Host to endpoint hostname for compatibility)
-    ↓
-mTLS Connection
-    ↓
-kubernetes-binding-ingress.ngrok.io
-    ↓
-Bound Endpoint (ngrok cloud)
-    ↓
-Your Backend Service</code></pre>
+      <pre><code>┌─────────────────────────────────────────────────────┐
+│ Virtual Mode (same-machine)                          │
+│                                                      │
+│ App → /etc/hosts → 127.0.0.2 → Dedicated Listener   │
+│       → Host Rewrite → mTLS → ngrok cloud → Backend │
+├─────────────────────────────────────────────────────┤
+│ Network Mode (cross-machine)                         │
+│                                                      │
+│ External Client → DNS (→ LAN IP) → Shared Listener   │
+│       → SNI/Host Routing → mTLS → ngrok cloud        │
+│       → Backend                                      │
+└─────────────────────────────────────────────────────┘</code></pre>
 
       <h3>How It Works</h3>
       
@@ -546,17 +554,20 @@ Your Backend Service</code></pre>
 
       <div class="card">
         <h4>3. DNS Management</h4>
-        <p>Automatically updates /etc/hosts:</p>
+        <p><strong>Virtual mode:</strong> Updates /etc/hosts with unique IPs per endpoint:</p>
         <pre><code># BEGIN ngrokd managed section
-10.107.0.2    api.example.com
-10.107.0.3    web.example.com
+127.0.0.2    api.example.com
+127.0.0.3    web.example.com
 # END ngrokd managed section</code></pre>
+        <p style="margin-top: 1rem;"><strong>Network mode:</strong> Runs a built-in DNS server that resolves all managed hostnames to the LAN IP. External clients point their DNS at the ngrokd machine. Per-domain routing configured automatically (macOS: /etc/resolver/, Linux: resolvectl or resolv.conf).</p>
       </div>
 
       <div class="card">
         <h4>4. Traffic Forwarding</h4>
-        <p>Each endpoint has a listener that forwards via mTLS:</p>
-        <pre><code>Local app → Listener (unique IP:port) → mTLS → ngrok cloud → Backend</code></pre>
+        <p><strong>Virtual mode:</strong> Each endpoint has a dedicated listener on its unique IP:</p>
+        <pre><code>App → Listener (127.0.0.2:443) → mTLS → ngrok cloud → Backend</code></pre>
+        <p style="margin-top: 1rem;"><strong>Network mode:</strong> Shared listeners multiplex by SNI (TLS) or Host header (HTTP):</p>
+        <pre><code>External client → DNS (→ LAN IP) → Shared listener (0.0.0.0:443) → SNI routing → mTLS → ngrok cloud → Backend</code></pre>
       </div>
 
       <h3>Network Modes</h3>
@@ -580,20 +591,24 @@ Your Backend Service</code></pre>
         <h4>Network Mode</h4>
         <p><strong>Pros:</strong></p>
         <ul>
-          <li>Accessible from network (other machines, containers)</li>
-          <li>Easy to configure firewalls (single port range)</li>
-          <li>Works well with Docker port mappings</li>
+          <li>Accessible from any device on the network (phones, VMs, CI runners)</li>
+          <li>Multiple endpoints share original ports (80, 443) via SNI/Host routing</li>
+          <li>Built-in DNS server — external clients just point DNS at ngrokd</li>
+          <li>Supports both exact and wildcard (*.example.com) endpoints</li>
         </ul>
         <p><strong>Cons:</strong></p>
         <ul>
-          <li>Uses sequential ports (can't have multiple endpoints on port 80)</li>
-          <li>Need to check ngrokctl list to see port assignments</li>
+          <li>Requires port 53 available for DNS server</li>
+          <li>External clients must configure DNS to ngrokd machine's IP</li>
+          <li>Raw TCP endpoints (non-HTTP/TLS) fall back to port remapping</li>
         </ul>
       </div>
 
       <h3>Automatic Features</h3>
       <ul>
         <li><strong>Port Conflict Resolution:</strong> Automatically finds next available port if conflict detected</li>
+        <li><strong>Built-in DNS:</strong> Auto-starts in network mode for external client resolution. Supports exact and wildcard endpoints with per-domain routing.</li>
+        <li><strong>Shared Listeners:</strong> HTTP/HTTPS/TLS endpoints share original ports (80, 443) with SNI and Host header routing — no port remapping needed.</li>
         <li><strong>Certificate Auto-Renewal:</strong> Threshold-based checking renews certificates when remaining lifetime is less than 1/3 of total lifetime</li>
         <li><strong>Hot Certificate Reload:</strong> Zero-downtime certificate rotation — new certificates are loaded without restarting listeners</li>
         <li><strong>Operator Recovery:</strong> Automatic re-registration if the operator binding is deleted (404 recovery)</li>
@@ -754,7 +769,7 @@ docker exec ngrokd ip addr show</code></pre>
 
   <footer>
     <div class="container">
-      <p>ngrokd v0.3.0 | Based on the ngrok Kubernetes Operator connection protocol</p>
+      <p>ngrokd v0.3.6 | Based on the ngrok Kubernetes Operator connection protocol</p>
       <p style="margin-top: 0.5rem;"><a href="https://github.com/ishanj12/ngrokd">GitHub</a> | <a href="https://hub.docker.com/r/ishanjain8108/ngrokd">Docker Hub</a></p>
     </div>
   </footer>
