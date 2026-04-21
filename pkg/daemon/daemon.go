@@ -171,10 +171,17 @@ func (d *Daemon) Start() error {
 		d.logger.Error(err, "Failed to start health server")
 	}
 	
-	// Initialize DNS resolver if explicitly enabled in config.
-	// DNS also auto-starts when wildcard endpoints are discovered during polling.
-	if d.config.DNS.Enabled {
+	// Initialize DNS resolver.
+	// In network mode, DNS is required for external client resolution (phones,
+	// VMs, CI) — /etc/hosts only works on the local machine. Start it
+	// unconditionally so all endpoints (exact and wildcard) are resolvable.
+	// In virtual mode, DNS is optional and auto-starts on wildcard discovery.
+	isNetworkMode := d.config.Net.ListenInterface != "virtual"
+	if d.config.DNS.Enabled || isNetworkMode {
 		if err := d.initDNS(); err != nil {
+			if isNetworkMode {
+				return fmt.Errorf("network mode requires DNS for external client resolution: %w", err)
+			}
 			d.logger.Error(err, "Failed to initialize DNS resolver (wildcard endpoints will be skipped)")
 		}
 	}
@@ -1389,6 +1396,14 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 					d.routingTable.AddExact(hostname, ip)
 				}
 			}
+			// Add resolver entry for exact endpoints so the OS routes DNS
+			// queries to our server (wildcards already handled by ensureDNSForWildcard).
+			if !isWildcard && d.resolvManager != nil && d.dnsListenAddr != "" {
+				if err := d.resolvManager.AddDomain(hostname, d.dnsListenAddr); err != nil {
+					d.logger.Error(err, "Failed to add DNS resolver entry for exact endpoint",
+						"hostname", hostname)
+				}
+			}
 		}
 		
 		d.logger.Info("Added endpoint via shared listener",
@@ -1502,15 +1517,37 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		WildcardSuffix:  wildcardSuffix,
 	}
 	
-	// Update DNS routing table for wildcard endpoints and exact endpoints
-	// that fall under an active wildcard domain (those go through DNS, not /etc/hosts).
+	// Update DNS routing table.
+	// In network mode, ALL endpoints (exact and wildcard) go through DNS so
+	// external clients can resolve them. In virtual mode, only wildcards and
+	// hostnames under an active wildcard domain use DNS.
 	if d.routingTable != nil {
-		ip := net.ParseIP(ipStr)
-		if ip != nil {
+		// In network mode, DNS must return an IP reachable by external clients.
+		// Use the listen interface IP rather than the virtual loopback IP.
+		routingIPStr := ipStr
+		if !virtualMode {
+			routingIPStr = listenInterface
+			if routingIPStr == "0.0.0.0" {
+				if lanIP := d.getLANIP(); lanIP != "" {
+					routingIPStr = lanIP
+				}
+			}
+		}
+		routingIP := net.ParseIP(routingIPStr)
+		if routingIP != nil {
 			if isWildcard {
-				d.routingTable.AddWildcard(wildcardSuffix, ip)
-			} else if d.isHostnameUnderWildcard(hostname) {
-				d.routingTable.AddExact(hostname, ip)
+				d.routingTable.AddWildcard(wildcardSuffix, routingIP)
+			} else if !virtualMode || d.isHostnameUnderWildcard(hostname) {
+				d.routingTable.AddExact(hostname, routingIP)
+			}
+		}
+		// In network mode, add a resolver entry for exact domains so the OS
+		// routes DNS queries to our server (macOS: /etc/resolver/, Linux:
+		// resolvectl or resolv.conf).
+		if !virtualMode && !isWildcard && d.resolvManager != nil && d.dnsListenAddr != "" {
+			if err := d.resolvManager.AddDomain(hostname, d.dnsListenAddr); err != nil {
+				d.logger.Error(err, "Failed to add DNS resolver entry for exact endpoint",
+					"hostname", hostname)
 			}
 		}
 	}
@@ -1521,7 +1558,7 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		"port", port,
 		"url", ep.URL,
 		"wildcard", isWildcard,
-		"dns_routed", isWildcard || d.isHostnameUnderWildcard(hostname))
+		"dns_routed", !virtualMode || isWildcard || d.isHostnameUnderWildcard(hostname))
 }
 
 func (d *Daemon) removeEndpoint(id string) {
@@ -1555,11 +1592,18 @@ func (d *Daemon) removeEndpoint(id string) {
 			}
 		}
 		// Remove DNS record when IP is fully freed
+		isNetworkMode := d.config.Net.ListenInterface != "virtual"
 		if d.routingTable != nil {
 			if ep.Wildcard {
 				d.routingTable.RemoveWildcard(ep.WildcardSuffix)
-			} else if ep.SharedListenerKey != "" || d.isHostnameUnderWildcard(ep.Hostname) {
+			} else if isNetworkMode || ep.SharedListenerKey != "" || d.isHostnameUnderWildcard(ep.Hostname) {
 				d.routingTable.RemoveExact(ep.Hostname)
+			}
+		}
+		// In network mode, remove the per-domain resolver entry for exact endpoints
+		if isNetworkMode && !ep.Wildcard && d.resolvManager != nil {
+			if err := d.resolvManager.RemoveDomain(ep.Hostname); err != nil {
+				d.logger.Error(err, "Failed to remove DNS resolver entry", "hostname", ep.Hostname)
 			}
 		}
 	}
@@ -1585,29 +1629,19 @@ func (d *Daemon) findLowestAvailablePort() int {
 }
 
 func (d *Daemon) updateHosts() {
+	// In network mode, all resolution goes through DNS — skip /etc/hosts
+	// management entirely. External clients (phones, VMs, CI) can't see
+	// the ngrokd host's /etc/hosts, and DNS provides a single consistent
+	// resolution path for both local and external clients.
+	if d.config.Net.ListenInterface != "virtual" {
+		return
+	}
+
 	allMappings := d.ipAllocator.GetAllMappings()
 
 	// Filter out wildcard allocator keys (e.g. "wildcard:example.com") and
 	// exact hostnames that are under an active wildcard domain (those go
 	// through DNS, not /etc/hosts, to avoid split-brain).
-	//
-	// In network mode, /etc/hosts must use the listen interface IP (or LAN IP
-	// for 0.0.0.0) instead of the virtual IP, so connections reach the shared
-	// listener.
-	listenIface := d.config.Net.ListenInterface
-	isNetworkMode := listenIface != "virtual"
-	var networkIP string
-	if isNetworkMode {
-		if listenIface == "0.0.0.0" {
-			networkIP = d.getLANIP()
-		} else {
-			resolved, err := d.resolveInterfaceToIP(listenIface)
-			if err == nil {
-				networkIP = resolved
-			}
-		}
-	}
-
 	hostsMappings := make(map[string]string, len(allMappings))
 	for hostname, ip := range allMappings {
 		if strings.HasPrefix(hostname, "wildcard:") {
@@ -1616,11 +1650,7 @@ func (d *Daemon) updateHosts() {
 		if d.isHostnameUnderWildcard(hostname) {
 			continue
 		}
-		if isNetworkMode && networkIP != "" {
-			hostsMappings[hostname] = networkIP
-		} else {
-			hostsMappings[hostname] = ip
-		}
+		hostsMappings[hostname] = ip
 	}
 
 	for attempt := 0; attempt < 3; attempt++ {
