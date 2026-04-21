@@ -1001,6 +1001,46 @@ func (d *Daemon) reloadConfig() {
 	overridesChanged := fmt.Sprintf("%v", oldOverrides) != fmt.Sprintf("%v", newCfg.Net.Overrides)
 	defaultChanged := oldListenInterface != newCfg.Net.ListenInterface
 	
+	// Handle mode transitions (virtual ↔ network)
+	wasNetworkMode := oldListenInterface != "virtual"
+	isNetworkMode := newCfg.Net.ListenInterface != "virtual"
+
+	if wasNetworkMode && !isNetworkMode {
+		// Network → Virtual: clean up DNS resolver entries and stop DNS
+		d.logger.Info("⚠️  Switching from network mode to virtual mode")
+		if d.resolvManager != nil {
+			if err := d.resolvManager.RemoveAllDomains(); err != nil {
+				d.logger.Error(err, "Failed to remove resolver entries during mode switch")
+			}
+		}
+		if d.dnsResolver != nil {
+			d.dnsResolver.Stop()
+			d.dnsResolver = nil
+			d.dnsListenAddr = ""
+			d.logger.Info("Stopped DNS server (not needed in virtual mode)")
+		}
+		if d.routingTable != nil {
+			d.routingTable.ClearAll()
+		}
+	} else if !wasNetworkMode && isNetworkMode {
+		// Virtual → Network: start DNS server
+		d.logger.Info("⚠️  Switching from virtual mode to network mode")
+		if d.dnsResolver == nil {
+			// Must release lock for initDNS (it does network operations)
+			d.mu.Unlock()
+			if err := d.initDNS(); err != nil {
+				d.logger.Error(err, "❌ Failed to start DNS for network mode")
+			}
+			d.mu.Lock()
+		}
+		// Clean up /etc/hosts entries — DNS handles resolution in network mode
+		if d.hostsManager != nil {
+			if err := d.hostsManager.RemoveAll(); err != nil {
+				d.logger.Error(err, "Failed to clean /etc/hosts during mode switch")
+			}
+		}
+	}
+
 	if overridesChanged || defaultChanged {
 		d.logger.Info("✓ Listen interface configuration changed")
 		d.logger.Info("⚠️  Rebinding existing endpoints (active connections will drop)")
