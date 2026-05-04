@@ -1,4 +1,4 @@
-# ngrokd - Forward Proxy Daemon for Kubernetes Bound Endpoints
+# ngrokd - Forward Proxy Daemon for Private Endpoints
 
 A standalone daemon that enables local and network applications to connect to [Kubernetes bound endpoints](https://ngrok.com/docs/k8s/) in ngrok's cloud via mTLS, without requiring a Kubernetes cluster.
 
