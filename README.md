@@ -1,24 +1,24 @@
 # ngrokd - Forward Proxy Daemon for Kubernetes Bound Endpoints
 
-A standalone daemon that enables local and network applications to connect to Kubernetes bound endpoints in ngrok's cloud via mTLS, without requiring a Kubernetes cluster.
+A standalone daemon that enables local and network applications to connect to [Kubernetes bound endpoints](https://ngrok.com/docs/k8s/) in ngrok's cloud via mTLS, without requiring a Kubernetes cluster.
 
 ## What is ngrokd?
 
 ngrokd is a background daemon that:
-- 🔍 **Auto-discovers** Kubernetes bound endpoints from ngrok API
+- 🔍 **Auto-discovers** Kubernetes bound endpoints from the ngrok API
 - 🌐 **Creates virtual network interfaces** with unique IPs per endpoint
-- 📝 **Manages DNS** automatically via /etc/hosts
+- 📝 **Manages DNS** automatically (via /etc/hosts and a built-in DNS resolver for wildcards)
 - 🔐 **Forwards traffic** securely via mTLS to ngrok cloud
-- 🔄 **Reconciles dynamically** - endpoints added/removed on-the-fly
-- 💾 **Persists state** - same hostname gets same IP across restarts
+- 🔄 **Reconciles dynamically** — endpoints added/removed on-the-fly
+- 💾 **Persists state** — same hostname gets same IP across restarts
 
 ## Architecture
 
 ```
 Local Application
-    ↓ (resolves via /etc/hosts)
-Unique IP per Endpoint
-    ↓ (daemon listener)
+    ↓ (resolves via /etc/hosts or built-in DNS)
+Unique IP per Endpoint (virtual mode) or Shared Listener (network mode)
+    ↓ (SNI/Host routing)
 mTLS Connection
     ↓
 kubernetes-binding-ingress.ngrok.io
@@ -28,226 +28,180 @@ Bound Endpoint (ngrok cloud)
 Your Backend Service
 ```
 
-## Key Features
-
-### Multi-Endpoint on Same Port
-```bash
-# All on port 80, different IPs - no port conflicts!
-curl http://api.identifier/      # → 127.0.0.2:80
-curl http://web.identifier/      # → 127.0.0.3:80
-curl http://database.identifier/ # → 127.0.0.4:80
-```
-
-### Network Accessibility (Optional)
-```bash
-# Enable in config for remote machine access
-listen_interface: "0.0.0.0"
-
-# Then from any machine on your network:
-curl http://daemon-machine:9080/  # Endpoint 1
-curl http://daemon-machine:9081/  # Endpoint 2
-```
-
-### Automatic Everything
-- ✅ Certificate provisioning (mTLS)
-- ✅ Endpoint discovery (polls every 30s)
-- ✅ IP allocation (persistent across restarts)
-- ✅ DNS updates (/etc/hosts managed automatically)
-- ✅ Listener lifecycle (add/remove dynamically)
-
-## Platform Support
-
-| Platform | IP Range | Interface | Status |
-|----------|----------|-----------|--------|
-| **Linux** | 10.107.0.0/16 | dummy | ✅ Production Ready |
-| **macOS** | 127.0.0.0/8 | lo0 | ✅ Production Ready |
-| **Windows** | TBD | - | ⏳ Planned |
-
-**Platform Differences:**
-- Linux uses 10.107.0.0/16 (cluster-like IPs)
-- macOS uses 127.0.0.0/8 (avoids routing conflicts)
-- Both fully functional with same features
-
 ## Quick Start
 
-### 1. Install
+### Install
 
+**One-line install (Linux/macOS):**
 ```bash
-# Build
+curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash
+```
+
+**Docker:**
+```bash
+docker run -d --name ngrokd \
+  --cap-add=NET_ADMIN \
+  -e NGROK_API_KEY=your_api_key \
+  -p 80:80 -p 443:443 -p 8081:8081 \
+  ishanjain8108/ngrokd:latest
+```
+
+**Build from source:**
+```bash
 go build -o ngrokd ./cmd/ngrokd
 go build -o ngrokctl ./cmd/ngrokctl
-
-# Install
-sudo mv ngrokd /usr/local/bin/
-sudo mv ngrokctl /usr/local/bin/
+sudo mv ngrokd ngrokctl /usr/local/bin/
 ```
 
-### 2. Configure
+### Install as a System Service
 
 ```bash
-sudo mkdir -p /etc/ngrokd
+# Install and start as a launchd (macOS) or systemd (Linux) service
+sudo ngrokd install
+sudo ngrokd start
 
-sudo tee /etc/ngrokd/config.yml << 'EOF'
-api:
-  url: https://api.ngrok.com
-  key: ""  # Set via ngrokctl
-
-ingressEndpoint: "kubernetes-binding-ingress.ngrok.io:443"
-
-server:
-  socket_path: /var/run/ngrokd.sock
-  client_cert: /etc/ngrokd/tls.crt
-  client_key: /etc/ngrokd/tls.key
-
-bound_endpoints:
-  poll_interval: 30
-
-net:
-  interface_name: ngrokd0
-  subnet: 10.107.0.0/16
-  listen_interface: virtual
-  start_port: 9080
-EOF
+# Other service commands
+sudo ngrokd stop
+sudo ngrokd restart
+sudo ngrokd status
+sudo ngrokd uninstall
 ```
 
-### 3. Start Daemon
+### Set API Key and Go
 
 ```bash
-sudo ngrokd --config=/etc/ngrokd/config.yml
-```
-
-### 4. Set API Key
-
-```bash
+# Set your ngrok API key (triggers registration + cert provisioning)
 ngrokctl set-api-key YOUR_NGROK_API_KEY
-```
 
-### 5. Use Endpoints
-
-```bash
-# Wait 30s for discovery, then:
-ngrokctl list
-
-# Test endpoints
-curl http://your-endpoint.ngrok.app/
-```
-
-## CLI Tool
-
-```bash
-# Check daemon status
+# Wait ~30s for endpoint discovery, then:
 ngrokctl status
-
-# List discovered endpoints
 ngrokctl list
 
-# Check health
-ngrokctl health
-
-# Set API key
-ngrokctl set-api-key <KEY>
+# Connect to your endpoints
+curl http://your-endpoint/
 ```
 
-## Installation Guides
+## Modes
 
-- **[MACOS.md](MACOS.md)** - macOS setup and installation
-- **[LINUX.md](LINUX.md)** - Linux setup with systemd
-- **[CLI.md](CLI.md)** - ngrokctl CLI reference
-- **[USAGE.md](USAGE.md)** - Detailed usage guide
+### Virtual Mode (default)
 
-## How It Works
+Each endpoint gets a unique IP on a virtual network interface. DNS resolution is handled via /etc/hosts (exact hostnames) and a built-in DNS resolver (wildcards).
 
-### 1. Virtual Network Interface
-
-Creates interface with subnet for unique IP allocation:
-- **Linux:** `ngrokd0` dummy interface (10.107.0.0/16)
-- **macOS:** `lo0` loopback aliases (127.0.0.0/8)
-
-### 2. IP Allocation
-
-Each discovered endpoint gets a unique IP:
-```
-10.107.0.2 → api.identifier
-10.107.0.3 → web.identifier
-10.107.0.4 → db.identifier
+```bash
+# All endpoints on their standard ports — no conflicts
+curl http://api.myservice/        # → 10.107.0.2:80
+curl http://web.myservice/        # → 10.107.0.3:80
+curl https://db.myservice/        # → 10.107.0.4:443
 ```
 
-### 3. DNS Management
+### Network Mode
 
-Automatically updates /etc/hosts:
-```
-# BEGIN ngrokd managed section
-10.107.0.2    api.identifier
-10.107.0.3    web.identifier
-# END ngrokd managed section
+All endpoints share a single listener on `0.0.0.0`, accessible from the network. Requests are routed by SNI (TLS) or Host header (HTTP).
+
+```yaml
+net:
+  listen_interface: "0.0.0.0"
+  start_port: 80
 ```
 
-### 4. Traffic Forwarding
-
-Each endpoint has a listener that forwards via mTLS:
+```bash
+# From any machine on the network:
+curl -H "Host: api.myservice" http://daemon-host:80/
+curl --resolve web.myservice:443:daemon-host https://web.myservice/
 ```
-Local app → Listener (unique IP) → mTLS → ngrok cloud → Backend
+
+## CLI Reference (ngrokctl)
+
+```
+ngrokctl status                  Show daemon status
+ngrokctl list                    List discovered bound endpoints
+ngrokctl health                  Check daemon health
+ngrokctl set-api-key <KEY>       Set ngrok API key
+ngrokctl refresh-cert            Check and renew mTLS certificate if expiring
+ngrokctl refresh-cert --force    Force certificate renewal
+ngrokctl config edit             Open config file in editor
 ```
 
 ## Configuration
 
-### Basic (Local Only)
+Default config is at `/etc/ngrokd/config.yml`. All fields have sensible defaults — a minimal config only needs the API key.
 
 ```yaml
 api:
-  key: ""  # Set via ngrokctl
-  
+  key: ""  # Set via ngrokctl set-api-key, or directly here
+
 bound_endpoints:
-  poll_interval: 30
+  poll_interval: 30           # Seconds between endpoint discovery polls
+  selectors:                  # CEL expressions to filter endpoints (default: all)
+    - "true"
 
 net:
-  subnet: 10.107.0.0/16
+  interface_name: ngrokd0     # Virtual interface name (Linux)
+  subnet: 10.107.0.0/16      # IP range for virtual IPs (Linux: 10.107.0.0/16, macOS: 127.0.0.0/8)
+  listen_interface: virtual   # "virtual" | "0.0.0.0" | specific IP
+  start_port: 9080            # Starting port for network mode
+
+server:
+  log_level: info
+  cert_refresh_interval: 3600 # Seconds between certificate refresh checks
+  health_address: "127.0.0.1" # Health endpoint bind address
+  health_port: 8081           # Health endpoint port
+
+dns:
+  enabled: false              # Auto-starts when wildcard endpoints are discovered
 ```
 
-### Network Accessible
+### Endpoint Selectors
+
+Filter which bound endpoints ngrokd should manage using CEL expressions:
 
 ```yaml
-net:
-  listen_interface: "0.0.0.0"  # Enable network access
-  start_port: 9080             # Start port for network listeners
+bound_endpoints:
+  selectors:
+    - "true"                                           # All endpoints (default)
+    - "endpoint.url.contains('myservice')"             # Only endpoints matching a pattern
+    - "!endpoint.url.contains('*')"                    # Exclude wildcard endpoints
 ```
 
-Options for `listen_interface`:
-- `virtual` - Unique IP per endpoint (default, localhost only)
-- `"0.0.0.0"` - Network accessible with sequential ports
-- Specific IP - Custom bind address (e.g., `"192.168.1.100"`)
+## Platform Support
 
-## Requirements
+| Platform | IP Range | Interface | Service Manager | Status |
+|----------|----------|-----------|-----------------|--------|
+| **Linux** | 10.107.0.0/16 | `ngrokd0` dummy | systemd | ✅ Production Ready |
+| **macOS** | 127.0.0.0/8 | `lo0` aliases | launchd | ✅ Production Ready |
+| **Docker** | 10.107.0.0/16 | `ngrokd0` dummy | — | ✅ Production Ready |
 
-- **ngrok API Key** - Get from https://dashboard.ngrok.com/api
-- **Bound Endpoints** - Create Kubernetes bound endpoints in ngrok
-- **Root/sudo** - Required for network interface and /etc/hosts
-- **Linux or macOS** - Windows planned
+## How It Works
 
+1. **Registration** — On first run, ngrokd registers as an operator with the ngrok API and provisions mTLS certificates.
+2. **Endpoint Discovery** — Polls the ngrok API for kubernetes-bound endpoints matching the configured selectors.
+3. **IP Allocation** — Each endpoint gets a unique IP from the configured subnet, persisted across restarts in `/etc/ngrokd/ip_mappings.json`.
+4. **DNS** — Exact hostnames are added to `/etc/hosts`. When wildcard endpoints are discovered, a built-in DNS resolver starts automatically.
+5. **Listeners** — A TLS/TCP listener is created per endpoint (virtual mode) or a shared listener routes by SNI/Host (network mode).
+6. **Forwarding** — Incoming connections are forwarded via mTLS to `kubernetes-binding-ingress.ngrok.io`, which routes to the bound endpoint's backend.
+7. **Reconciliation** — Every poll interval, new endpoints are added and removed endpoints are cleaned up, including their IPs, DNS entries, and listeners.
 
-
-## Files Created
+## Files
 
 ```
 /etc/ngrokd/
 ├── config.yml          # Configuration
-├── tls.crt             # mTLS certificate (auto-generated)
-├── tls.key             # Private key (auto-generated)
+├── tls.crt             # mTLS certificate (auto-provisioned)
+├── tls.key             # Private key (auto-provisioned)
 ├── operator_id         # Operator registration ID
 └── ip_mappings.json    # Persistent IP allocations
 
-/var/run/
-└── ngrokd.sock         # Unix domain socket for control
-
-/etc/hosts              # Auto-managed DNS entries
+/var/run/ngrokd.sock    # Unix socket for ngrokctl communication
+/etc/hosts              # Managed DNS entries (between ngrokd markers)
 ```
 
-## Credits
+## Requirements
 
-Based on the ngrok Kubernetes Operator connection protocol.
+- **ngrok API Key** — from [dashboard.ngrok.com/api](https://dashboard.ngrok.com/api)
+- **Kubernetes Bound Endpoints** — created in your ngrok account
+- **Root/sudo** — required for network interface and /etc/hosts management
+- **Linux or macOS** (Docker also supported)
 
 ## Version
 
-**v0.2.0** - Daemon mode with virtual network interfaces
-
-Previous CLI version available at tag `v0.1.0-cli`
+**v0.3.6**
