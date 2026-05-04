@@ -1,6 +1,6 @@
 # ngrokd Windows Installation Script
 # Usage: Run as Administrator
-#   iwr -useb https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.ps1 | iex
+#   iwr -useb https://raw.githubusercontent.com/ngrok/ngrokd/main/install.ps1 | iex
 
 param(
     [string]$InstallDir = "$env:ProgramFiles\ngrokd",
@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$REPO = "ishanj12/ngrokd"
+$REPO = "ngrok/ngrokd"
 
 Write-Host ""
 Write-Host "╔════════════════════════════════════════════════════════╗" -ForegroundColor Blue

@@ -9,7 +9,7 @@ Complete guide for installing and using ngrokd on Windows.
 Open PowerShell **as Administrator** and run:
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/ngrok/ngrokd/main/install.ps1 | iex
 ```
 
 This will:
@@ -20,7 +20,7 @@ This will:
 
 ### Option 2: Manual Download
 
-1. Download the latest release from [GitHub Releases](https://github.com/ishanj12/ngrokd/releases)
+1. Download the latest release from [GitHub Releases](https://github.com/ngrok/ngrokd/releases)
 2. Extract the ZIP file
 3. Run PowerShell **as Administrator**
 4. Navigate to the extracted folder
@@ -333,7 +333,7 @@ Windows implementation has similar performance to Linux/macOS:
 
 ## Support
 
-- [GitHub Issues](https://github.com/ishanj12/ngrokd/issues)
+- [GitHub Issues](https://github.com/ngrok/ngrokd/issues)
 - [Main README](README.md)
 - [Usage Guide](USAGE.md)
 

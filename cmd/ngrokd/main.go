@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/go-logr/logr/funcr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/daemon"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/service"
+	"github.com/ngrok/ngrokd/pkg/daemon"
+	"github.com/ngrok/ngrokd/pkg/service"
 )
 
 func main() {

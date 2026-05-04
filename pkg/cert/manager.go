@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
+	"github.com/ngrok/ngrokd/pkg/ngrokapi"
 )
 
 // Manager handles certificate lifecycle

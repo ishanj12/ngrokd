@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
+	"github.com/ngrok/ngrokd/pkg/forwarder"
 )
 
 // StatusCallback is called when connection events occur

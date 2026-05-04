@@ -34,7 +34,7 @@ Your Backend Service
 
 **One-line install (Linux/macOS):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ngrok/ngrokd/main/install.sh | sudo bash
 ```
 
 **Docker:**

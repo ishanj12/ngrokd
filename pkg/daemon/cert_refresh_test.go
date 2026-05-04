@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/config"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/health"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/ngrokapi"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/socket"
+	"github.com/ngrok/ngrokd/pkg/cert"
+	"github.com/ngrok/ngrokd/pkg/config"
+	"github.com/ngrok/ngrokd/pkg/health"
+	"github.com/ngrok/ngrokd/pkg/ngrokapi"
+	"github.com/ngrok/ngrokd/pkg/socket"
 )
 
 func generateTestCert(t *testing.T, notBefore, notAfter time.Time) (keyPEM, certPEM []byte) {

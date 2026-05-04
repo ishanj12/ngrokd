@@ -7,7 +7,7 @@ import (
 	"net"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/internal/pb_agent"
+	"github.com/ngrok/ngrokd/internal/pb_agent"
 	"google.golang.org/protobuf/proto"
 )
 
