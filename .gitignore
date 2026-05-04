@@ -1,5 +1,8 @@
 # Binaries
 ngrokd
+ngrokctl
+ngrokd-linux
+ngrokctl-linux
 ngrok-forward-proxy
 ngrok-list-endpoints
 *.exe
