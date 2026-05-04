@@ -20,16 +20,21 @@ docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
   -e NGROK_API_KEY=your_api_key_here \
+  -p 8081:8081 \
+  -p 80:80 \
+  -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 ```
 
 **What happens:**
 - Container auto-creates `/etc/ngrokd/config.yml` on first run
 - Injects `NGROK_API_KEY` from environment variable into config
-- Starts with `listen_interface: "0.0.0.0"` (recommended for Docker)
-- Endpoints accessible via port mappings on host
+- Starts with `listen_interface: "virtual"` by default (see [Listen Interface Modes](#listen-interface-modes) for network mode)
+- In network mode (`listen_interface: "0.0.0.0"`), endpoints share ports 80/443 with SNI/Host routing
+- Built-in DNS server starts automatically in network mode
+- Health endpoint available on port 8081
 
 ### Check Status
 
@@ -47,42 +52,42 @@ docker exec ngrokd ngrokctl list
 ### Test Endpoints
 
 ```bash
-# From host machine (using port mappings)
-curl http://localhost:9080/   # First endpoint
-curl http://localhost:9081/   # Second endpoint
-curl http://localhost:9082/   # Third endpoint
+# Network mode (shared listener on port 80) — use Host header
+curl -H "Host: my-app.example.com" http://localhost:80/
+curl -H "Host: other-app.example.com" http://localhost:80/
 
 # From inside container
-docker exec ngrokd curl http://localhost:9080/
+docker exec ngrokd curl -H "Host: my-app.example.com" http://localhost:80/
 ```
 
 ## Port Mappings
 
-When using `listen_interface: "0.0.0.0"` (default), endpoints bind to sequential ports inside the container.
+In network mode (`listen_interface: "0.0.0.0"`), endpoints share ports 80 and 443 via
+SNI/Host routing. Endpoints on non-standard ports use sequential ports from `start_port`.
 
-**Example mapping:**
+**Required port mappings:**
 ```bash
--p 9080-9100:9080-9100
+-p 80:80              # Shared HTTP listener
+-p 443:443            # Shared HTTPS listener
+-p 8081:8081          # Health check
+-p 9080-9100:9080-9100  # Non-standard port endpoints
 ```
 
-- Host port 9080 → Container port 9080 → Endpoint 1
-- Host port 9081 → Container port 9081 → Endpoint 2
-- Host port 9082 → Container port 9082 → Endpoint 3
-
-**If port 9080 conflicts** (e.g., with Kind/Kubernetes):
+**If port 80/443 conflicts** on the host:
 ```bash
-# Use different host ports
+# Remap to alternate host ports
 docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
   -e NGROK_API_KEY=$NGROK_API_KEY \
-  -p 10080-10100:9080-9100 \
+  -p 8080:80 -p 8443:443 \
+  -p 8081:8081 \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 
-# Access endpoints on different ports
-curl http://localhost:10080/  # → container port 9080
-curl http://localhost:10081/  # → container port 9081
+# Access via remapped ports
+curl -H "Host: my-app.example.com" http://localhost:8080/
+curl --insecure -H "Host: my-app.example.com" https://localhost:8443/
 ```
 
 ## Configuration Modes
@@ -96,9 +101,10 @@ docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
   -e NGROK_API_KEY=your_key \
+  -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 ```
 
 ### Option 2: Set API Key After Start
@@ -108,9 +114,10 @@ docker run -d \
 docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
+  -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 
 # Set API key via CLI
 docker exec ngrokd ngrokctl set-api-key YOUR_API_KEY
@@ -132,6 +139,8 @@ server:
   socket_path: /var/run/ngrokd.sock
   client_cert: /etc/ngrokd/tls.crt
   client_key: /etc/ngrokd/tls.key
+  health_address: "0.0.0.0"
+  health_port: 8081
 
 bound_endpoints:
   poll_interval: 30
@@ -141,21 +150,20 @@ net:
   subnet: 10.107.0.0/16
   listen_interface: "0.0.0.0"
   start_port: 9080
+
+dns:
+  enabled: true
 EOF
 
-# Copy config into volume
-docker run --rm \
-  -v ngrokd-data:/etc/ngrokd \
-  -v /tmp/ngrokd-config.yml:/config.yml \
-  alpine cp /config.yml /etc/ngrokd/config.yml
-
-# Start container
+# Mount config directly
 docker run -d \
   --name ngrokd \
   --cap-add=NET_ADMIN \
+  -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
+  -v /tmp/ngrokd-config.yml:/etc/ngrokd/config.yml \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 ```
 
 ### Edit Config in Running Container
@@ -178,38 +186,72 @@ docker restart ngrokd
 
 ## Listen Interface Modes
 
-### Mode 1: `"0.0.0.0"` (Default - Recommended for Docker)
+### Mode 1: `"0.0.0.0"` — Network Mode (Recommended for Docker)
 
-Binds to all interfaces with sequential ports:
+Network mode creates **shared listeners** on ports 80 and 443 with a built-in DNS server.
+Multiple endpoints (including wildcards) share the same port and are routed by TLS SNI or HTTP Host header.
 
 ```yaml
 net:
   listen_interface: "0.0.0.0"
   start_port: 9080
+
+dns:
+  enabled: true  # Auto-starts in network mode
 ```
 
-**Endpoints:**
-- Endpoint 1: `0.0.0.0:9080`
-- Endpoint 2: `0.0.0.0:9081`
-- Endpoint 3: `0.0.0.0:9082`
+**How it works:**
+- All HTTP endpoints share a single listener on `0.0.0.0:80`
+- All HTTPS endpoints share a single listener on `0.0.0.0:443`
+- Connections are routed by SNI (TLS) or Host header (HTTP)
+- A built-in DNS server starts automatically for hostname resolution
+- Exact endpoints without standard ports use sequential ports from `start_port`
 
-**Access from host:**
+**You must expose ports 80/443** in addition to the health and sequential port ranges:
+
 ```bash
-curl http://localhost:9080/
+docker run -d \
+  --name ngrokd \
+  --cap-add=NET_ADMIN \
+  -e NGROK_API_KEY=your_key \
+  -p 8081:8081 \
+  -p 80:80 \
+  -p 443:443 \
+  -p 9080-9100:9080-9100 \
+  -v ngrokd-data:/etc/ngrokd \
+  ngrokd:latest
+```
+
+If port 80 or 443 is already in use on the host, remap them:
+```bash
+-p 8080:80 -p 8443:443
+```
+
+**Test endpoints from host:**
+```bash
+# Exact endpoint
+curl -H "Host: hello.world" http://localhost:80/
+
+# Wildcard endpoint
+curl -H "Host: foo.example.com" http://localhost:80/
+
+# With remapped ports
+curl -H "Host: hello.world" http://localhost:8080/
 ```
 
 **Pros:**
-- ✅ Easy to access from host via port mappings
-- ✅ Works with `-p` flag
-- ✅ Good for multi-container setups
+- ✅ Multiple endpoints share port 80/443 (like a real web server)
+- ✅ Wildcard endpoints work (`*.example.com`)
+- ✅ Built-in DNS for hostname resolution inside the container
+- ✅ Access from host via port mappings
 
 **Cons:**
-- ❌ Can't use same port for multiple endpoints
-- ❌ Must map port range
+- ❌ Must expose ports 80/443 (may conflict with host services)
+- ❌ External DNS resolution requires pointing clients at the container's DNS server
 
-### Mode 2: `virtual` (Works but Limited)
+### Mode 2: `virtual` (Container-Internal Only)
 
-Creates virtual IPs inside container:
+Creates virtual IPs inside container. Each endpoint gets a unique IP on the `10.107.0.0/16` subnet:
 
 ```yaml
 net:
@@ -224,12 +266,12 @@ net:
 **Access from inside container only:**
 ```bash
 docker exec ngrokd curl http://10.107.0.2/
-docker exec ngrokd curl http://ishan.testlinux/  # Uses /etc/hosts
+docker exec ngrokd curl http://hello.world/  # Uses /etc/hosts
 ```
 
 **Pros:**
 - ✅ Multiple endpoints can use same port
-- ✅ /etc/hosts DNS works (fixed in latest version)
+- ✅ /etc/hosts DNS works inside the container
 
 **Cons:**
 - ❌ Virtual IPs only exist inside container
@@ -243,18 +285,19 @@ docker exec ngrokd curl http://ishan.testlinux/  # Uses /etc/hosts
 ### Basic Setup
 
 ```yaml
-version: '3.8'
-
 services:
   ngrokd:
-    image: ngrokd:latest
+    image: ishanjain8108/ngrokd:latest
     container_name: ngrokd
     cap_add:
       - NET_ADMIN
     environment:
       - NGROK_API_KEY=${NGROK_API_KEY}
     ports:
-      - "9080-9100:9080-9100"
+      - "8081:8081"        # Health check
+      - "80:80"            # Shared HTTP listener (network mode)
+      - "443:443"          # Shared HTTPS listener (network mode)
+      - "9080-9100:9080-9100"  # Sequential ports (non-standard ports)
     volumes:
       - ngrokd-data:/etc/ngrokd
     restart: unless-stopped
@@ -266,35 +309,38 @@ volumes:
 **Usage:**
 ```bash
 # Start
-NGROK_API_KEY=your_key docker-compose up -d
+NGROK_API_KEY=your_key docker compose up -d
 
 # Check logs
-docker-compose logs -f ngrokd
+docker compose logs -f ngrokd
 
 # Check status
-docker-compose exec ngrokd ngrokctl status
+docker compose exec ngrokd ngrokctl status
 
 # List endpoints
-docker-compose exec ngrokd ngrokctl list
+docker compose exec ngrokd ngrokctl list
 
-# Test endpoint
-curl http://localhost:9080/
+# Test endpoint (network mode — use Host header)
+curl -H "Host: my-app.example.com" http://localhost:80/
 ```
 
 ### With Application
 
-```yaml
-version: '3.8'
+In network mode, other containers on the same Docker network can reach endpoints
+via the shared listener on port 80/443 using the Host header:
 
+```yaml
 services:
   ngrokd:
-    image: ngrokd:latest
+    image: ishanjain8108/ngrokd:latest
     cap_add:
       - NET_ADMIN
     environment:
       - NGROK_API_KEY=${NGROK_API_KEY}
     ports:
-      - "9080-9100:9080-9100"
+      - "8081:8081"
+      - "80:80"
+      - "443:443"
     volumes:
       - ngrokd-data:/etc/ngrokd
     restart: unless-stopped
@@ -302,8 +348,8 @@ services:
   app:
     image: my-app:latest
     environment:
-      - API_URL=http://ngrokd:9080
-      - DB_URL=http://ngrokd:9081
+      # Use ngrokd's shared listener with Host header routing
+      - API_URL=http://ngrokd:80
     depends_on:
       - ngrokd
     ports:
@@ -312,6 +358,10 @@ services:
 volumes:
   ngrokd-data:
 ```
+
+> **Note:** The application must send the correct `Host` header (e.g. `Host: my-api.example.com`)
+> when connecting through the shared listener. Most HTTP clients do this automatically
+> when the URL hostname matches the endpoint.
 
 ## Volumes
 
@@ -541,16 +591,17 @@ docker build --platform linux/arm64 -t ngrokd:arm64 .
 ### With Docker Swarm
 
 ```yaml
-version: '3.8'
-
 services:
   ngrokd:
-    image: ngrokd:latest
+    image: ishanjain8108/ngrokd:latest
     cap_add:
       - NET_ADMIN
     environment:
       - NGROK_API_KEY=${NGROK_API_KEY}
     ports:
+      - "8081:8081"
+      - "80:80"
+      - "443:443"
       - "9080-9100:9080-9100"
     volumes:
       - ngrokd-data:/etc/ngrokd
@@ -599,9 +650,10 @@ secrets:
 docker run -d --name ngrokd \
   --cap-add=NET_ADMIN \
   -e NGROK_API_KEY=$NGROK_API_KEY \
+  -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ngrokd:latest
+  ishanjain8108/ngrokd:latest
 
 # Wait for discovery
 sleep 35
@@ -609,11 +661,11 @@ sleep 35
 # Check endpoints
 docker exec ngrokd ngrokctl list
 
-# Test from host
-curl http://localhost:9080/
+# Test from host (use Host header for shared listener)
+curl -H "Host: my-app.example.com" http://localhost:80/
 
 # Test from inside
-docker exec ngrokd curl http://localhost:9080/
+docker exec ngrokd curl -H "Host: my-app.example.com" http://localhost:80/
 ```
 
 ### CI/CD Pipeline
@@ -625,11 +677,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       ngrokd:
-        image: ngrokd:latest
+        image: ishanjain8108/ngrokd:latest
         options: --cap-add=NET_ADMIN
         env:
           NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
         ports:
+          - 8081:8081
+          - 80:80
+          - 443:443
           - 9080-9100:9080-9100
 
     steps:
@@ -640,7 +695,7 @@ jobs:
 
       - name: Run tests
         env:
-          API_URL: http://localhost:9080
+          API_URL: http://localhost:80
         run: npm test
 ```
 
