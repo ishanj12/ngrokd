@@ -3,8 +3,8 @@
 
 set -e
 
-VERSION="v0.3.4"
-REPO="ishanj12/ngrokd"
+VERSION="v0.3.6"
+REPO="ngrok/ngrokd"
 
 echo "Building ngrokd $VERSION for multiple platforms..."
 echo ""
@@ -31,16 +31,6 @@ GOOS=darwin GOARCH=amd64 go build -o dist/ngrokctl-darwin-amd64 ./cmd/ngrokctl
 echo "Building macOS ARM64..."
 GOOS=darwin GOARCH=arm64 go build -o dist/ngrokd-darwin-arm64 ./cmd/ngrokd
 GOOS=darwin GOARCH=arm64 go build -o dist/ngrokctl-darwin-arm64 ./cmd/ngrokctl
-
-# Build for Windows AMD64
-echo "Building Windows AMD64..."
-GOOS=windows GOARCH=amd64 go build -o dist/ngrokd-windows-amd64.exe ./cmd/ngrokd
-GOOS=windows GOARCH=amd64 go build -o dist/ngrokctl-windows-amd64.exe ./cmd/ngrokctl
-
-# Build for Windows ARM64
-echo "Building Windows ARM64..."
-GOOS=windows GOARCH=arm64 go build -o dist/ngrokd-windows-arm64.exe ./cmd/ngrokd
-GOOS=windows GOARCH=arm64 go build -o dist/ngrokctl-windows-arm64.exe ./cmd/ngrokctl
 
 # Make all executable
 chmod +x dist/*

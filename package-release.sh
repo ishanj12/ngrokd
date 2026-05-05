@@ -80,7 +80,7 @@ Quick Start
 
 2. Configure (if not using install script):
    sudo mkdir -p /etc/ngrokd
-   # Create config.yml - see https://github.com/ishanj12/ngrokd
+   # Create config.yml - see https://github.com/ngrok/ngrokd
 
 3. Start daemon:
    sudo nohup ngrokd --config=/etc/ngrokd/config.yml > ~/ngrokd.log 2>&1 &
@@ -98,10 +98,10 @@ Uninstall
 
 Documentation
 -------------
-- GitHub: https://github.com/ishanj12/ngrokd
-- README: https://github.com/ishanj12/ngrokd/blob/main/README.md
-- macOS Guide: https://github.com/ishanj12/ngrokd/blob/main/MACOS.md
-- Linux Guide: https://github.com/ishanj12/ngrokd/blob/main/LINUX.md
+- GitHub: https://github.com/ngrok/ngrokd
+- README: https://github.com/ngrok/ngrokd/blob/main/README.md
+- macOS Guide: https://github.com/ngrok/ngrokd/blob/main/MACOS.md
+- Linux Guide: https://github.com/ngrok/ngrokd/blob/main/LINUX.md
 
 Requirements
 ------------
@@ -112,7 +112,7 @@ Requirements
 
 Support
 -------
-Issues: https://github.com/ishanj12/ngrokd/issues
+Issues: https://github.com/ngrok/ngrokd/issues
 EOF
     
     # Replace placeholders in README

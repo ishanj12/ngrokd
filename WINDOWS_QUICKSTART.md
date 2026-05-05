@@ -6,7 +6,7 @@
 Open **PowerShell as Administrator** and run:
 
 ```powershell
-iwr -useb https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/ngrok/ngrokd/main/install.ps1 | iex
 ```
 
 Close and reopen PowerShell after installation.

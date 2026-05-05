@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr/funcr"
-	dns "github.com/ishanjain/ngrok-forward-proxy/pkg/dns"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
+	dns "github.com/ngrok/ngrokd/pkg/dns"
+	"github.com/ngrok/ngrokd/pkg/routing"
 	mdns "github.com/miekg/dns"
 )
 

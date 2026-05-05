@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
+	"github.com/ngrok/ngrokd/pkg/cert"
+	"github.com/ngrok/ngrokd/pkg/forwarder"
+	"github.com/ngrok/ngrokd/pkg/routing"
 )
 
 func newTestManager(t *testing.T) *Manager {

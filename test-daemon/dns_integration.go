@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/dns"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
+	"github.com/ngrok/ngrokd/pkg/dns"
+	"github.com/ngrok/ngrokd/pkg/routing"
 
 	"github.com/go-logr/logr/funcr"
 	mdns "github.com/miekg/dns"

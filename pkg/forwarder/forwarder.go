@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/internal/mux"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/cert"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/sni"
+	"github.com/ngrok/ngrokd/internal/mux"
+	"github.com/ngrok/ngrokd/pkg/cert"
+	"github.com/ngrok/ngrokd/pkg/sni"
 )
 
 // Config holds the configuration for the forwarder

@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/forwarder"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/sni"
+	"github.com/ngrok/ngrokd/pkg/forwarder"
+	"github.com/ngrok/ngrokd/pkg/routing"
+	"github.com/ngrok/ngrokd/pkg/sni"
 )
 
 // sharedListener handles a single TCP listener that routes connections

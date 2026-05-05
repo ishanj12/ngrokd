@@ -13,7 +13,7 @@
 Use the installation script to automatically download and install ngrokd:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ngrok/ngrokd/main/install.sh | sudo bash
 ```
 
 This will:
@@ -28,12 +28,12 @@ This will:
 
 ```bash
 # Download binaries (Apple Silicon)
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-darwin-arm64
-curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokctl-darwin-arm64
+curl -LO https://github.com/ngrok/ngrokd/releases/download/v0.2.0/ngrokd-darwin-arm64
+curl -LO https://github.com/ngrok/ngrokd/releases/download/v0.2.0/ngrokctl-darwin-arm64
 
 # Or for Intel Macs
-# curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokd-darwin-amd64
-# curl -LO https://github.com/ishanj12/ngrokd/releases/download/v0.2.0/ngrokctl-darwin-amd64
+# curl -LO https://github.com/ngrok/ngrokd/releases/download/v0.2.0/ngrokd-darwin-amd64
+# curl -LO https://github.com/ngrok/ngrokd/releases/download/v0.2.0/ngrokctl-darwin-amd64
 
 # Make executable and install
 chmod +x ngrokd-darwin-arm64 ngrokctl-darwin-arm64
@@ -51,7 +51,7 @@ Requires Go 1.21+:
 
 ```bash
 # Clone repository
-git clone https://github.com/ishanj12/ngrokd.git
+git clone https://github.com/ngrok/ngrokd.git
 cd ngrokd
 
 # Build daemon and CLI

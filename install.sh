@@ -1,6 +1,6 @@
 #!/bin/bash
 # ngrokd installation script
-# Usage: curl -fsSL https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.sh | sudo bash
+# Usage: curl -fsSL https://raw.githubusercontent.com/ngrok/ngrokd/main/install.sh | sudo bash
 
 set -e
 
@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 CONFIG_DIR="/etc/ngrokd"
-REPO="ishanj12/ngrokd"
+REPO="ngrok/ngrokd"
 VERSION="${VERSION:-latest}"
 
 echo -e "${BLUE}╔════════════════════════════════════════════════════════╗${NC}"

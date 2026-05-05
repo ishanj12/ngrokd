@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"github.com/ishanjain/ngrok-forward-proxy/pkg/routing"
+	"github.com/ngrok/ngrokd/pkg/routing"
 	mdns "github.com/miekg/dns"
 )
 

@@ -59,7 +59,7 @@ Same as Linux/macOS - binds to 0.0.0.0 with sequential ports.
 
 ### One-Line Install
 ```powershell
-iwr -useb https://raw.githubusercontent.com/ishanj12/ngrokd/main/install.ps1 | iex
+iwr -useb https://raw.githubusercontent.com/ngrok/ngrokd/main/install.ps1 | iex
 ```
 
 ### Manual Download

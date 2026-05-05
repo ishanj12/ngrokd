@@ -6,7 +6,7 @@
 
 ```bash
 # Clone repository
-git clone https://github.com/ishanj12/ngrokd.git
+git clone https://github.com/ngrok/ngrokd.git
 cd ngrokd
 
 # Build image
@@ -573,7 +573,7 @@ docker buildx create --use
 # Build for AMD64 and ARM64
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/ishanj12/ngrokd:latest \
+  -t ghcr.io/ngrok/ngrokd:latest \
   --push \
   .
 ```
