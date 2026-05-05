@@ -43,7 +43,7 @@ docker run -d --name ngrokd \
   --cap-add=NET_ADMIN \
   -e NGROK_API_KEY=your_api_key \
   -p 80:80 -p 443:443 -p 8081:8081 \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 ```
 
 **Build from source:**

@@ -309,7 +309,7 @@ curl.exe http://your-endpoint/</code></pre>
 
       <div id="install-docker" class="tab-content">
         <h3>Pull Image</h3>
-        <pre><code>docker pull ishanjain8108/ngrokd:latest</code></pre>
+        <pre><code>docker pull ngrok/ngrokd:latest</code></pre>
 
         <h3>Run Container</h3>
         <pre><code>docker run -d \
@@ -318,7 +318,7 @@ curl.exe http://your-endpoint/</code></pre>
   -e NGROK_API_KEY=your_api_key \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest</code></pre>
+  ngrok/ngrokd:latest</code></pre>
         
         <p style="margin-top: 1rem;"><em><strong>Note:</strong> NET_ADMIN is only required for virtual mode (unique IPs). Network mode (<code>listen_interface: "0.0.0.0"</code>) does NOT require NET_ADMIN — simply remove <code>--cap-add=NET_ADMIN</code> and set <code>listen_interface: "0.0.0.0"</code> in your config.</em></p>
 
@@ -335,7 +335,7 @@ curl http://localhost:9080/</code></pre>
         <h3>Using Docker Compose</h3>
         <pre><code>services:
   ngrokd:
-    image: ishanjain8108/ngrokd:latest
+    image: ngrok/ngrokd:latest
     container_name: ngrokd
     cap_add:
       - NET_ADMIN
@@ -770,7 +770,7 @@ docker exec ngrokd ip addr show</code></pre>
   <footer>
     <div class="container">
       <p>ngrokd v0.3.6 | Based on the ngrok Kubernetes Operator connection protocol</p>
-      <p style="margin-top: 0.5rem;"><a href="https://github.com/ngrok/ngrokd">GitHub</a> | <a href="https://hub.docker.com/r/ishanjain8108/ngrokd">Docker Hub</a></p>
+      <p style="margin-top: 0.5rem;"><a href="https://github.com/ngrok/ngrokd">GitHub</a> | <a href="https://hub.docker.com/r/ngrok/ngrokd">Docker Hub</a></p>
     </div>
   </footer>
 
