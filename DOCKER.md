@@ -25,7 +25,7 @@ docker run -d \
   -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 ```
 
 **What happens:**
@@ -83,7 +83,7 @@ docker run -d \
   -p 8080:80 -p 8443:443 \
   -p 8081:8081 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 
 # Access via remapped ports
 curl -H "Host: my-app.example.com" http://localhost:8080/
@@ -104,7 +104,7 @@ docker run -d \
   -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 ```
 
 ### Option 2: Set API Key After Start
@@ -117,7 +117,7 @@ docker run -d \
   -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 
 # Set API key via CLI
 docker exec ngrokd ngrokctl set-api-key YOUR_API_KEY
@@ -163,7 +163,7 @@ docker run -d \
   -p 9080-9100:9080-9100 \
   -v /tmp/ngrokd-config.yml:/etc/ngrokd/config.yml \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 ```
 
 ### Edit Config in Running Container
@@ -287,7 +287,7 @@ docker exec ngrokd curl http://hello.world/  # Uses /etc/hosts
 ```yaml
 services:
   ngrokd:
-    image: ishanjain8108/ngrokd:latest
+    image: ngrok/ngrokd:latest
     container_name: ngrokd
     cap_add:
       - NET_ADMIN
@@ -332,7 +332,7 @@ via the shared listener on port 80/443 using the Host header:
 ```yaml
 services:
   ngrokd:
-    image: ishanjain8108/ngrokd:latest
+    image: ngrok/ngrokd:latest
     cap_add:
       - NET_ADMIN
     environment:
@@ -593,7 +593,7 @@ docker build --platform linux/arm64 -t ngrokd:arm64 .
 ```yaml
 services:
   ngrokd:
-    image: ishanjain8108/ngrokd:latest
+    image: ngrok/ngrokd:latest
     cap_add:
       - NET_ADMIN
     environment:
@@ -653,7 +653,7 @@ docker run -d --name ngrokd \
   -p 8081:8081 -p 80:80 -p 443:443 \
   -p 9080-9100:9080-9100 \
   -v ngrokd-data:/etc/ngrokd \
-  ishanjain8108/ngrokd:latest
+  ngrok/ngrokd:latest
 
 # Wait for discovery
 sleep 35
@@ -677,7 +677,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       ngrokd:
-        image: ishanjain8108/ngrokd:latest
+        image: ngrok/ngrokd:latest
         options: --cap-add=NET_ADMIN
         env:
           NGROK_API_KEY: ${{ secrets.NGROK_API_KEY }}
