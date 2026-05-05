@@ -42,9 +42,6 @@ RUN chmod +x /usr/local/bin/ngrokd /usr/local/bin/ngrokctl
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Create default config
-COPY config.daemon.yaml /etc/ngrokd/config.yml.example
-
 # Volume for persistent data
 VOLUME ["/etc/ngrokd"]
 
