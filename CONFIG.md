@@ -98,7 +98,7 @@ Configuration for bound endpoint discovery and polling.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `poll_interval` | int | No | `30` | Seconds between API polls |
-| `selectors` | array | No | `['true']` | Endpoint selectors (currently unused) |
+| `selectors` | array | No | `['true']` | CEL expressions to filter which bound endpoints are managed (evaluated server-side by ngrok API) |
 
 **Example:**
 ```yaml

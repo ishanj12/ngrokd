@@ -21,12 +21,13 @@ type Manager struct {
 
 // Config holds the configuration for the certificate manager
 type Config struct {
-	CertDir     string
-	APIKey      string
-	Description string
-	Metadata    string
-	Region      string
-	Logger      logr.Logger
+	CertDir            string
+	APIKey             string
+	Description        string
+	Metadata           string
+	Region             string
+	EndpointSelectors  []string
+	Logger             logr.Logger
 }
 
 // NewManager creates a new certificate manager
@@ -100,7 +101,8 @@ func (m *Manager) provisionCertificate(ctx context.Context, config Config) (tls.
 		EnabledFeatures: []string{"bindings"},
 		Region:          region,
 		Binding: &ngrokapi.KubernetesOperatorBindingCreate{
-			CSR: string(csrPEM),
+			EndpointSelectors: config.EndpointSelectors,
+			CSR:               string(csrPEM),
 		},
 	}
 

@@ -22,6 +22,8 @@ server:
 
 bound_endpoints:
   poll_interval: 30
+  selectors:
+    - "true"
 
 net:
   interface_name: ngrokd0
@@ -37,7 +39,10 @@ fi
 # If NGROK_API_KEY is set, inject it into config
 if [ -n "$NGROK_API_KEY" ]; then
   echo "Setting API key from environment variable..."
-  sed -i "s|key: \"\"|key: \"$NGROK_API_KEY\"|" /etc/ngrokd/config.yml
+  # Use temp file + cat to avoid sed -i rename failure on bind mounts
+  sed "s|key: \"\"|key: \"$NGROK_API_KEY\"|" /etc/ngrokd/config.yml > /tmp/config.yml.tmp
+  cat /tmp/config.yml.tmp > /etc/ngrokd/config.yml
+  rm -f /tmp/config.yml.tmp
 fi
 
 # Execute the main command

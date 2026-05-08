@@ -3,7 +3,7 @@
 
 set -e
 
-VERSION="v0.3.6"
+VERSION="v0.3.8"
 REPO="ngrok/ngrokd"
 
 echo "Building ngrokd $VERSION for multiple platforms..."

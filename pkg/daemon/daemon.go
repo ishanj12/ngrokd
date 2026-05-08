@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -206,6 +207,9 @@ func (d *Daemon) Start() error {
 		if err := d.initializeForwarder(); err != nil {
 			return fmt.Errorf("failed to initialize forwarder: %w", err)
 		}
+		// Sync endpoint selectors to the API on startup in case the
+		// config was updated while the daemon was stopped.
+		go d.syncSelectors()
 		go d.pollingLoop()
 		go d.certRefreshLoop()
 	}
@@ -291,21 +295,18 @@ func (d *Daemon) register() error {
 		return fmt.Errorf("failed to create cert directory: %w", err)
 	}
 	
-	d.certManager = cert.NewManager(cert.Config{
-		CertDir:     certDir,
-		APIKey:      d.config.API.Key,
-		Description: "ngrokd daemon",
-		Region:      "global",
-		Logger:      d.logger,
-	})
+	certCfg := cert.Config{
+		CertDir:           certDir,
+		APIKey:            d.config.API.Key,
+		Description:       "ngrokd daemon",
+		Region:            "global",
+		EndpointSelectors: d.config.BoundEndpoints.Selectors,
+		Logger:            d.logger,
+	}
 	
-	_, err := d.certManager.EnsureCertificate(d.ctx, cert.Config{
-		CertDir:     certDir,
-		APIKey:      d.config.API.Key,
-		Description: "ngrokd daemon",
-		Region:      "global",
-		Logger:      d.logger,
-	})
+	d.certManager = cert.NewManager(certCfg)
+	
+	_, err := d.certManager.EnsureCertificate(d.ctx, certCfg)
 	if err != nil {
 		return err
 	}
@@ -322,6 +323,32 @@ func (d *Daemon) register() error {
 	d.logger.Info("Registration complete", "operatorID", d.operatorID)
 	d.apiClient = ngrokapi.NewClient(d.config.API.Key)
 	return nil
+}
+
+// syncSelectors pushes the configured endpoint selectors to the ngrok API.
+// Called on startup so that config changes made while the daemon was stopped
+// take effect without requiring a re-registration or manual refresh.
+func (d *Daemon) syncSelectors() {
+	d.mu.RLock()
+	client := d.apiClient
+	operatorID := d.operatorID
+	selectors := d.config.BoundEndpoints.Selectors
+	d.mu.RUnlock()
+
+	if client == nil || operatorID == "" {
+		return
+	}
+
+	updateReq := &ngrokapi.KubernetesOperatorUpdate{
+		Binding: &ngrokapi.KubernetesOperatorBindingUpdate{
+			EndpointSelectors: selectors,
+		},
+	}
+	if _, err := client.UpdateKubernetesOperator(d.ctx, operatorID, updateReq); err != nil {
+		d.logger.Error(err, "Failed to sync endpoint selectors on startup")
+	} else {
+		d.logger.Info("Endpoint selectors synced to ngrok API", "selectors", selectors)
+	}
 }
 
 func (d *Daemon) initializeForwarder() error {
@@ -637,10 +664,20 @@ func (d *Daemon) pollAndReconcile() bool {
 		}
 	}
 	
+	// Sort new endpoints: shared-eligible protocols (http/https/tls) first
+	// so they claim standard ports (80, 443) via shared listeners before
+	// non-shared protocols (tcp) can bind them exclusively.
+	var toAdd []ngrokapi.Endpoint
 	for id, ep := range desired {
 		if _, exists := d.endpoints[id]; !exists {
-			d.addEndpoint(ep)
+			toAdd = append(toAdd, ep)
 		}
+	}
+	sort.SliceStable(toAdd, func(i, j int) bool {
+		return endpointBindPriority(toAdd[i]) < endpointBindPriority(toAdd[j])
+	})
+	for _, ep := range toAdd {
+		d.addEndpoint(ep)
 	}
 	
 	d.mu.Unlock()
@@ -736,7 +773,8 @@ func (d *Daemon) refreshCertWithForce(force bool) {
 	csrStr := string(csrPEM)
 	updateReq := &ngrokapi.KubernetesOperatorUpdate{
 		Binding: &ngrokapi.KubernetesOperatorBindingUpdate{
-			CSR: &csrStr,
+			EndpointSelectors: d.config.BoundEndpoints.Selectors,
+			CSR:               &csrStr,
 		},
 	}
 
@@ -982,10 +1020,12 @@ func (d *Daemon) reloadConfig() {
 	
 	// Update settings that can be hot-reloaded
 	oldPollInterval := d.config.BoundEndpoints.PollInterval
+	oldSelectors := d.config.BoundEndpoints.Selectors
 	oldOverrides := d.config.Net.Overrides
 	oldListenInterface := d.config.Net.ListenInterface
 	
 	d.config.BoundEndpoints.PollInterval = newCfg.BoundEndpoints.PollInterval
+	d.config.BoundEndpoints.Selectors = newCfg.BoundEndpoints.Selectors
 	d.config.Net.Overrides = newCfg.Net.Overrides
 	d.config.Net.ListenInterface = newCfg.Net.ListenInterface
 	d.config.Net.StartPort = newCfg.Net.StartPort
@@ -995,6 +1035,28 @@ func (d *Daemon) reloadConfig() {
 		d.logger.Info("✓ Poll interval updated",
 			"old", oldPollInterval,
 			"new", newCfg.BoundEndpoints.PollInterval)
+	}
+	
+	// If selectors changed, push them to the ngrok API
+	selectorsChanged := fmt.Sprintf("%v", oldSelectors) != fmt.Sprintf("%v", newCfg.BoundEndpoints.Selectors)
+	if selectorsChanged {
+		d.logger.Info("✓ Endpoint selectors updated",
+			"old", oldSelectors,
+			"new", newCfg.BoundEndpoints.Selectors)
+		if d.registered && d.apiClient != nil {
+			go func() {
+				updateReq := &ngrokapi.KubernetesOperatorUpdate{
+					Binding: &ngrokapi.KubernetesOperatorBindingUpdate{
+						EndpointSelectors: newCfg.BoundEndpoints.Selectors,
+					},
+				}
+				if _, err := d.apiClient.UpdateKubernetesOperator(d.ctx, d.operatorID, updateReq); err != nil {
+					d.logger.Error(err, "Failed to update endpoint selectors on ngrok API")
+				} else {
+					d.logger.Info("✓ Endpoint selectors pushed to ngrok API")
+				}
+			}()
+		}
 	}
 	
 	// Check if listen interfaces changed for existing endpoints
@@ -1250,6 +1312,20 @@ func (d *Daemon) ipExistsOnMachine(ipAddr string) bool {
 	return false
 }
 
+// endpointBindPriority returns a sort key for endpoint processing order.
+// Shared-eligible protocols (http, https, tls) get priority 0 so they
+// claim standard ports via shared listeners before non-shared protocols
+// (tcp) which get priority 1.
+func endpointBindPriority(ep ngrokapi.Endpoint) int {
+	scheme := strings.SplitN(ep.URL, "://", 2)[0]
+	switch scheme {
+	case "https", "tls", "http":
+		return 0
+	default:
+		return 1
+	}
+}
+
 func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 	if d.listenerMgr == nil {
 		d.logger.Error(nil, "Cannot add endpoint - forwarder not initialized", "url", ep.URL)
@@ -1387,11 +1463,38 @@ func (d *Daemon) addEndpoint(ep ngrokapi.Endpoint) {
 		
 		created, err := d.listenerMgr.StartSharedListener(d.ctx, sharedKey, listenInterface, port, d.routingTable)
 		if err != nil {
-			d.logger.Error(err, "Failed to start shared listener",
-				"key", sharedKey,
-				"address", fmt.Sprintf("%s:%d", listenInterface, port))
-			cleanupIP()
-			return
+			// Check if a non-shared (TCP) endpoint is blocking this port.
+			// Shared listeners should take priority on standard ports so
+			// multiple HTTP/TLS endpoints can share them.
+			if evictedID := d.findNonSharedEndpointOnPort(listenInterface, port); evictedID != "" {
+				d.logger.Info("Evicting non-shared endpoint to reclaim port for shared listener",
+					"evicted_id", evictedID,
+					"port", port)
+				evictedEp := d.endpoints[evictedID]
+				d.removeEndpoint(evictedID)
+
+				// Retry shared listener now that the port is free
+				created, err = d.listenerMgr.StartSharedListener(d.ctx, sharedKey, listenInterface, port, d.routingTable)
+				if err != nil {
+					d.logger.Error(err, "Failed to start shared listener after eviction",
+						"key", sharedKey,
+						"address", fmt.Sprintf("%s:%d", listenInterface, port))
+					cleanupIP()
+					return
+				}
+
+				// Re-add the evicted TCP endpoint — it will fall back to a remapped port
+				d.addEndpoint(ngrokapi.Endpoint{
+					ID:  evictedEp.ID,
+					URL: evictedEp.URL,
+				})
+			} else {
+				d.logger.Error(err, "Failed to start shared listener",
+					"key", sharedKey,
+					"address", fmt.Sprintf("%s:%d", listenInterface, port))
+				cleanupIP()
+				return
+			}
 		}
 		if created {
 			d.logger.Info("Created shared listener",
@@ -1654,6 +1757,20 @@ func (d *Daemon) removeEndpoint(id string) {
 	}
 
 	d.logger.Info("Removed bound endpoint", "hostname", ep.Hostname, "ip", ep.IP, "port", ep.Port)
+}
+
+// findNonSharedEndpointOnPort returns the ID of a non-shared (TCP) endpoint
+// that has a dedicated listener on the given interface and port, or "" if none.
+func (d *Daemon) findNonSharedEndpointOnPort(listenInterface string, port int) string {
+	for id, ep := range d.endpoints {
+		if ep.SharedListenerKey != "" {
+			continue // skip shared-listener endpoints
+		}
+		if ep.NetworkPort == port && ep.ListenInterface == listenInterface {
+			return id
+		}
+	}
+	return ""
 }
 
 func (d *Daemon) findLowestAvailablePort() int {
